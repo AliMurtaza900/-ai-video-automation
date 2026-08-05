@@ -47,7 +47,14 @@ jobs:
             -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac \
             -shortest output/final-video.mp4
 
-      - name: Upload final video
+      - name: Upload final video to YouTube
+        env:
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_OAUTH_CLIENT_JSON: ${{ secrets.YOUTUBE_OAUTH_CLIENT_JSON }}
+          YOUTUBE_PRIVACY: private
+        run: python src/youtube_upload.py
+
+      - name: Save generated video artifact
         uses: actions/upload-artifact@v4
         with:
           name: generated-video
