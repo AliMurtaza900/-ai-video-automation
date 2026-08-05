@@ -13,15 +13,27 @@ SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
 
 def get_credentials():
-    token = os.environ.get("YOUTUBE_TOKEN_JSON")
-    if not token:
+    refresh_token = os.environ.get("YOUTUBE_REFRESH_TOKEN")
+    client_json = os.environ.get("YOUTUBE_OAUTH_CLIENT_JSON")
+    if not refresh_token or not client_json:
         raise RuntimeError(
-            "YOUTUBE_TOKEN_JSON is not configured. Complete one-time YouTube OAuth setup first."
+            "YOUTUBE_REFRESH_TOKEN and YOUTUBE_OAUTH_CLIENT_JSON must be configured."
         )
-    info = json.loads(token)
-    creds = Credentials.from_authorized_user_info(info, SCOPES)
-    if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
+
+    oauth = json.loads(client_json)
+    config = oauth.get("installed") or oauth.get("web")
+    if not config:
+        raise RuntimeError("OAuth client JSON must contain an installed or web configuration.")
+
+    creds = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri=config["token_uri"],
+        client_id=config["client_id"],
+        client_secret=config["client_secret"],
+        scopes=SCOPES,
+    )
+    creds.refresh(Request())
     return creds
 
 
