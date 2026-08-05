@@ -32,11 +32,21 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python src/main.py
 
-      - name: Render MP4
+      - name: Generate AI voice and word timings
+        run: python src/add_voice.py
+
+      - name: Render MP4 with synchronized captions
         run: python src/render_video.py
 
-      - name: Generate AI voice and combine audio
-        run: python src/add_voice.py
+      - name: Combine final video and voice
+        run: python - <<'PY'
+import subprocess
+subprocess.run([
+    'ffmpeg', '-y', '-i', 'output/test-video.mp4', '-i', 'output/voice.mp3',
+    '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac',
+    '-shortest', 'output/final-video.mp4'
+], check=True)
+PY
 
       - name: Upload final video
         uses: actions/upload-artifact@v4
