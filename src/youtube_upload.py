@@ -1,4 +1,3 @@
-import json
 import os
 from pathlib import Path
 
@@ -14,23 +13,26 @@ SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
 def get_credentials():
     refresh_token = os.environ.get("YOUTUBE_REFRESH_TOKEN")
-    client_json = os.environ.get("YOUTUBE_OAUTH_CLIENT_JSON")
-    if not refresh_token or not client_json:
-        raise RuntimeError(
-            "YOUTUBE_REFRESH_TOKEN and YOUTUBE_OAUTH_CLIENT_JSON must be configured."
-        )
+    client_id = os.environ.get("YOUTUBE_CLIENT_ID")
+    client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET")
 
-    oauth = json.loads(client_json)
-    config = oauth.get("installed") or oauth.get("web")
-    if not config:
-        raise RuntimeError("OAuth client JSON must contain an installed or web configuration.")
+    missing = [
+        name for name, value in {
+            "YOUTUBE_REFRESH_TOKEN": refresh_token,
+            "YOUTUBE_CLIENT_ID": client_id,
+            "YOUTUBE_CLIENT_SECRET": client_secret,
+        }.items()
+        if not value
+    ]
+    if missing:
+        raise RuntimeError("Missing GitHub secrets: " + ", ".join(missing))
 
     creds = Credentials(
         token=None,
         refresh_token=refresh_token,
-        token_uri=config["token_uri"],
-        client_id=config["client_id"],
-        client_secret=config["client_secret"],
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
         scopes=SCOPES,
     )
     creds.refresh(Request())
