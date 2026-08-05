@@ -24,28 +24,38 @@ FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 FONT_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
 
-def caption_for_frame(words, frame):
-    if not words:
-        return ""
-    # Show roughly 6 words at a time, with a gentle timing variation.
-    chunk_size = 6
-    chunk_index = min(len(words) // chunk_size, max(0, frame // (FPS * 2)))
-    start = chunk_index * chunk_size
-    return " ".join(words[start:start + chunk_size])
+def load_caption_timings():
+    timing_file = OUTPUT / "caption_timing.txt"
+    if not timing_file.exists():
+        return []
+    result = []
+    for line in timing_file.read_text(encoding="utf-8").splitlines():
+        try:
+            start, end, text = line.split("|", 2)
+            result.append((float(start), float(end), text))
+        except ValueError:
+            continue
+    return result
 
 
-def make_frame(index, words):
-    # Animated abstract background: no external image API required.
+def caption_for_frame(timings, frame):
+    t = frame / FPS
+    for start, end, text in timings:
+        if start <= t < end:
+            return text
+    return ""
+
+
+def make_frame(index, timings):
     phase = index / (FPS * 2)
     bg = (
-        int(10 + 12 * ((phase % 1))),
-        int(14 + 10 * (((phase + 0.33) % 1))),
-        int(28 + 18 * (((phase + 0.66) % 1))),
+        int(10 + 12 * (phase % 1)),
+        int(14 + 10 * ((phase + 0.33) % 1)),
+        int(28 + 18 * ((phase + 0.66) % 1)),
     )
     img = Image.new("RGB", (W, H), bg)
     draw = ImageDraw.Draw(img)
 
-    # Moving geometric light panels.
     x = int((W + 500) * ((index % (FPS * 8)) / (FPS * 8))) - 500
     draw.rounded_rectangle((x, 220, x + 650, 700), radius=80, outline=(90, 110, 180), width=8)
     draw.ellipse((W - x - 250, 900, W - x + 350, 1500), outline=(80, 150, 190), width=10)
@@ -56,7 +66,7 @@ def make_frame(index, words):
 
     draw.text((W // 2, 150), "AI FACT", font=title_font, anchor="mm")
 
-    caption = caption_for_frame(words, index)
+    caption = caption_for_frame(timings, index)
     if caption:
         wrapped = "\n".join(textwrap.wrap(caption, width=24))
         bbox = draw.multiline_textbbox((0, 0), wrapped, font=caption_font, spacing=16, align="center")
@@ -77,9 +87,12 @@ def make_frame(index, words):
 def main():
     script_file = OUTPUT / "script.txt"
     script = script_file.read_text(encoding="utf-8").strip() if script_file.exists() else ""
-    words = script.split()
-    if not words:
+    if not script:
         raise RuntimeError("Generated script is empty")
+
+    timings = load_caption_timings()
+    if not timings:
+        raise RuntimeError("Caption timing data is missing; generate the voice before rendering")
 
     frames = ASSETS / "frames"
     frames.mkdir(exist_ok=True)
@@ -89,7 +102,7 @@ def main():
         old.unlink()
 
     for i in range(total):
-        make_frame(i, words).save(frames / f"frame_{i:04d}.png")
+        make_frame(i, timings).save(frames / f"frame_{i:04d}.png")
 
     output = OUTPUT / "test-video.mp4"
     subprocess.run([
