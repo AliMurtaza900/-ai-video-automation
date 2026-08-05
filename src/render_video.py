@@ -1,11 +1,12 @@
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import subprocess
 import textwrap
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
 ASSETS = ROOT / "assets"
+VISUALS = ASSETS / "visuals"
 OUTPUT.mkdir(exist_ok=True)
 ASSETS.mkdir(exist_ok=True)
 
@@ -46,19 +47,46 @@ def caption_for_frame(timings, frame):
     return ""
 
 
-def make_frame(index, timings):
-    phase = index / (FPS * 2)
-    bg = (
-        int(10 + 12 * (phase % 1)),
-        int(14 + 10 * ((phase + 0.33) % 1)),
-        int(28 + 18 * ((phase + 0.66) % 1)),
-    )
-    img = Image.new("RGB", (W, H), bg)
-    draw = ImageDraw.Draw(img)
+def load_visuals():
+    images = []
+    for path in sorted(VISUALS.glob("visual_*")):
+        try:
+            img = Image.open(path).convert("RGB")
+            images.append(img)
+        except OSError:
+            pass
+    return images
 
-    x = int((W + 500) * ((index % (FPS * 8)) / (FPS * 8))) - 500
-    draw.rounded_rectangle((x, 220, x + 650, 700), radius=80, outline=(90, 110, 180), width=8)
-    draw.ellipse((W - x - 250, 900, W - x + 350, 1500), outline=(80, 150, 190), width=10)
+
+def visual_background(images, index):
+    if not images:
+        phase = index / (FPS * 2)
+        return Image.new("RGB", (W, H), (
+            int(10 + 12 * (phase % 1)),
+            int(14 + 10 * ((phase + 0.33) % 1)),
+            int(28 + 18 * ((phase + 0.66) % 1)),
+        ))
+
+    # Hold each image for several seconds and apply a gentle zoom/pan so the
+    # stills feel like video rather than a slideshow.
+    slot = max(1, FPS * 5)
+    image = images[(index // slot) % len(images)].copy()
+    scale = max(W / image.width, H / image.height) * (1.0 + 0.08 * ((index % slot) / slot))
+    nw, nh = int(image.width * scale), int(image.height * scale)
+    image = image.resize((nw, nh), Image.Resampling.LANCZOS)
+    left = max(0, (nw - W) // 2)
+    top = max(0, (nh - H) // 2)
+    image = image.crop((left, top, left + W, top + H))
+
+    # Darken slightly so white captions remain readable.
+    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 85))
+    image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
+    return image
+
+
+def make_frame(index, timings, visuals):
+    img = visual_background(visuals, index)
+    draw = ImageDraw.Draw(img)
 
     title_font = get_font(FONT_BOLD, 58)
     caption_font = get_font(FONT_BOLD, 64)
@@ -77,10 +105,10 @@ def make_frame(index, timings):
             W // 2 + (bbox[2] - bbox[0]) // 2 + pad,
             H // 2 + (bbox[3] - bbox[1]) // 2 + pad,
         )
-        draw.rounded_rectangle(box, radius=35, fill=(5, 5, 10), outline=(150, 160, 220), width=4)
-        draw.multiline_text((W // 2, H // 2), wrapped, font=caption_font, spacing=16, align="center", anchor="mm")
+        draw.rounded_rectangle(box, radius=35, fill=(5, 5, 10, 185), outline=(255, 255, 255), width=4)
+        draw.multiline_text((W // 2, H // 2), wrapped, font=caption_font, spacing=16, align="center", anchor="mm", fill=(255, 255, 255))
 
-    draw.text((W // 2, H - 120), "Follow for more facts", font=small_font, anchor="mm")
+    draw.text((W // 2, H - 120), "Follow for more facts", font=small_font, anchor="mm", fill=(255, 255, 255))
     return img
 
 
@@ -94,6 +122,9 @@ def main():
     if not timings:
         raise RuntimeError("Caption timing data is missing; generate the voice before rendering")
 
+    visuals = load_visuals()
+    print(f"Using {len(visuals)} downloaded visuals")
+
     frames = ASSETS / "frames"
     frames.mkdir(exist_ok=True)
     total = FPS * MAX_SECONDS
@@ -102,7 +133,7 @@ def main():
         old.unlink()
 
     for i in range(total):
-        make_frame(i, timings).save(frames / f"frame_{i:04d}.png")
+        make_frame(i, timings, visuals).save(frames / f"frame_{i:04d}.png")
 
     output = OUTPUT / "test-video.mp4"
     subprocess.run([
