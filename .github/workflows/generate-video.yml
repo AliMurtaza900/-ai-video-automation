@@ -50,7 +50,8 @@ jobs:
       - name: Upload final video to YouTube
         env:
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-          YOUTUBE_OAUTH_CLIENT_JSON: ${{ secrets.YOUTUBE_OAUTH_CLIENT_JSON }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_PRIVACY: private
         run: python src/youtube_upload.py
 
