@@ -1,4 +1,5 @@
 import asyncio
+import re
 import subprocess
 from pathlib import Path
 import edge_tts
@@ -8,41 +9,47 @@ OUTPUT = ROOT / "output"
 VOICE = "en-US-AriaNeural"
 
 
-async def make_voice(text: str, output: Path, timing_file: Path):
+async def make_voice(text: str, output: Path):
     communicate = edge_tts.Communicate(text, VOICE)
-    words = []
     with output.open("wb") as audio:
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 audio.write(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
-                start = chunk["offset"] / 10_000_000
-                duration = chunk.get("duration", 0) / 10_000_000
-                word = chunk.get("text", "").strip()
-                if word:
-                    words.append((start, start + duration, word))
 
-    if not words:
-        raise RuntimeError("Edge TTS returned no word-boundary timing data")
 
-    lines = []
-    current = []
-    start = None
-    for item in words:
-        if start is None:
-            start = item[0]
-        current.append(item)
-        if len(current) >= 6:
-            lines.append((start, item[1], " ".join(x[2] for x in current)))
-            current = []
-            start = None
-    if current:
-        lines.append((start, current[-1][1], " ".join(x[2] for x in current)))
-
-    timing_file.write_text(
-        "\n".join(f"{s:.3f}|{e:.3f}|{text}" for s, e, text in lines),
-        encoding="utf-8",
+def duration_seconds(path: Path) -> float:
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        capture_output=True, text=True, check=True,
     )
+    return float(result.stdout.strip())
+
+
+def make_caption_timings(text: str, duration: float):
+    # Split at natural pauses first, then keep captions short enough for Shorts.
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    chunks = []
+    for sentence in sentences:
+        words = sentence.split()
+        for i in range(0, len(words), 7):
+            chunks.append(" ".join(words[i:i + 7]))
+
+    if not chunks:
+        return []
+
+    # Allocate time by character count. This follows speech much better than
+    # a fixed duration per caption because longer phrases generally take longer.
+    weights = [max(1, len(c.replace(" ", ""))) for c in chunks]
+    total_weight = sum(weights)
+    timings = []
+    cursor = 0.0
+    for i, chunk in enumerate(chunks):
+        span = duration * weights[i] / total_weight
+        end = duration if i == len(chunks) - 1 else cursor + span
+        timings.append((cursor, end, chunk))
+        cursor = end
+    return timings
 
 
 def main():
@@ -56,14 +63,18 @@ def main():
     if not text:
         raise RuntimeError("Generated script is empty")
 
-    asyncio.run(make_voice(text, audio_file, timing_file))
+    if audio_file.exists():
+        audio_file.unlink()
+    asyncio.run(make_voice(text, audio_file))
+    duration = duration_seconds(audio_file)
 
-    subprocess.run([
-        "ffmpeg", "-y", "-i", str(video_file), "-i", str(audio_file),
-        "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac",
-        "-shortest", str(final_file),
-    ], check=True)
-    print(f"Created video with word-timed captions: {final_file}")
+    timings = make_caption_timings(text, duration)
+    timing_file.write_text(
+        "\n".join(f"{s:.3f}|{e:.3f}|{caption}" for s, e, caption in timings),
+        encoding="utf-8",
+    )
+
+    print(f"Created voice ({duration:.2f}s) and {len(timings)} caption segments")
 
 
 if __name__ == "__main__":
