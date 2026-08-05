@@ -24,12 +24,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Generate video
+      - name: Generate AI script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python src/main.py
 
-      - name: Upload generated video as artifact
+      - name: Render MP4
+        run: python src/render_video.py
+
+      - name: Upload generated video
         uses: actions/upload-artifact@v4
         with:
           name: generated-video
