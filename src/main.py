@@ -13,7 +13,8 @@ Return a concise narration script only, suitable for a 30-45 second video.
 Start with a strong hook and end with a curiosity-driven line.
 """
 
-MODELS = ["gemini-3.5-flash-lite", "gemini-3.5-flash"]
+# Prefer the stronger Flash model for script quality; use Flash-Lite only as a fallback.
+MODELS = ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
 
 
 def generate_with_retry(client, model, attempts=4):
