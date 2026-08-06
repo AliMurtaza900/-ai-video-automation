@@ -8,6 +8,12 @@ on:
   schedule:
     - cron: '0 12 * * *'
 
+# Prevent a pile-up of identical video generations when several commits land
+# close together. A newer run replaces an older queued/in-progress run.
+concurrency:
+  group: generate-ai-video-main
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
