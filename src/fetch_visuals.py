@@ -22,8 +22,7 @@ def clean(value):
 
 
 def scene_sentences(script):
-    sentences = [clean(s) for s in re.split(r"(?<=[.!?])\s+", script.strip()) if clean(s)]
-    return sentences[:12]
+    return [clean(s) for s in re.split(r"(?<=[.!?])\s+", script.strip()) if clean(s)][:12]
 
 
 def terms_for_scene(sentence):
@@ -41,78 +40,100 @@ def search_media(query, video=True):
     r = requests.get(API, params=params, timeout=20, headers=UA)
     r.raise_for_status()
     pages = r.json().get("query", {}).get("pages", {})
-    result=[]
+    result = []
     for page in pages.values():
-        info=page.get("imageinfo", [{}])[0]
-        url=info.get("url")
-        if not url: continue
-        mime=info.get("mime","")
-        if video and mime not in VIDEO_MIMES: continue
-        if not video and not url.lower().split("?")[0].endswith(IMAGE_EXTS): continue
-        meta=info.get("extmetadata", {})
-        result.append({
-            "url":url,"mime":mime,
-            "title":clean(meta.get("ObjectName",{}).get("value",page.get("title",query))),
-            "artist":clean(meta.get("Artist",{}).get("value","")),
-            "license":clean(meta.get("LicenseShortName",{}).get("value","")),
-            "description":clean(meta.get("ImageDescription",{}).get("value","")),
-            "pageurl":page.get("fullurl",f"https://commons.wikimedia.org/wiki/{quote(page.get('title',''))}"),
-        })
+        info = page.get("imageinfo", [{}])[0]
+        url = info.get("url")
+        if not url:
+            continue
+        mime = info.get("mime", "")
+        if video and mime not in VIDEO_MIMES:
+            continue
+        if not video and not url.lower().split("?")[0].endswith(IMAGE_EXTS):
+            continue
+        meta = info.get("extmetadata", {})
+        result.append({"url": url, "mime": mime,
+                       "title": clean(meta.get("ObjectName", {}).get("value", page.get("title", query))),
+                       "artist": clean(meta.get("Artist", {}).get("value", "")),
+                       "license": clean(meta.get("LicenseShortName", {}).get("value", "")),
+                       "description": clean(meta.get("ImageDescription", {}).get("value", "")),
+                       "pageurl": page.get("fullurl", f"https://commons.wikimedia.org/wiki/{quote(page.get('title',''))}")})
     return result
 
 
 def score(c, terms):
-    title=c["title"].lower(); desc=c["description"].lower()
-    score=sum(5 if t in title else 2 if t in desc else 0 for t in terms)
-    if c["mime"] in VIDEO_MIMES: score += 5
-    if c["license"]: score += 2
-    return score
+    title, desc = c["title"].lower(), c["description"].lower()
+    value = sum(5 if t in title else 2 if t in desc else 0 for t in terms)
+    if c["mime"] in VIDEO_MIMES:
+        value += 5
+    if c["license"]:
+        value += 2
+    return value
 
 
 def download(c, index):
-    r=requests.get(c["url"],timeout=120,headers=UA,stream=True); r.raise_for_status()
-    suffix=".webm" if c["mime"]=="video/webm" else ".mp4" if c["mime"]=="video/mp4" else ".jpg"
-    path=VISUALS/f"visual_{index:02d}{suffix""
-    total=0
+    r = requests.get(c["url"], timeout=120, headers=UA, stream=True)
+    r.raise_for_status()
+    suffix = ".webm" if c["mime"] == "video/webm" else ".mp4" if c["mime"] == "video/mp4" else ".jpg"
+    path = VISUALS / f"visual_{index:02d}{suffix}"
+    total = 0
     with path.open("wb") as f:
-        for chunk in r.iter_content(1024*1024):
+        for chunk in r.iter_content(1024 * 1024):
             if chunk:
-                f.write(chunk); total+=len(chunk)
-                if total>150*1024*1024: raise RuntimeError("media exceeds 150 MB")
-    if total<50000: path.unlink(missing_ok=True); raise RuntimeError("media too small")
+                f.write(chunk)
+                total += len(chunk)
+                if total > 150 * 1024 * 1024:
+                    raise RuntimeError("media exceeds 150 MB")
+    if total < 50000:
+        path.unlink(missing_ok=True)
+        raise RuntimeError("media too small")
     return path
 
 
 def main():
-    script=(OUTPUT/"script.txt").read_text(encoding="utf-8").strip()
-    if not script: raise RuntimeError("Generated script is empty")
-    for p in VISUALS.glob("visual_*"): p.unlink()
-    for p in VISUALS.glob("*.txt"): p.unlink()
+    script = (OUTPUT / "script.txt").read_text(encoding="utf-8").strip()
+    if not script:
+        raise RuntimeError("Generated script is empty")
+    for p in VISUALS.glob("visual_*"):
+        p.unlink()
+    for p in VISUALS.glob("*.txt"):
+        p.unlink()
 
-    scenes=scene_sentences(script)
-    selected=[]; used=set(); sources=[]
+    scenes = scene_sentences(script)
+    selected, used, sources = [], set(), []
     for scene_index, sentence in enumerate(scenes):
-        terms=terms_for_scene(sentence)
-        query=" ".join(terms[:3])
-        candidates=[]
-        try: candidates=search_media(query, True)
-        except Exception as e: print(f"Scene {scene_index+1} video search failed: {e}")
+        terms = terms_for_scene(sentence)
+        query = " ".join(terms[:3])
+        try:
+            candidates = search_media(query, True)
+        except Exception as e:
+            print(f"Scene {scene_index + 1} video search failed: {e}")
+            candidates = []
         candidates.sort(key=lambda c: score(c, terms), reverse=True)
         if not candidates:
-            try: candidates=search_media(query, False)
-            except Exception as e: print(f"Scene {scene_index+1} image search failed: {e}")
+            try:
+                candidates = search_media(query, False)
+            except Exception as e:
+                print(f"Scene {scene_index + 1} image search failed: {e}")
+                candidates = []
             candidates.sort(key=lambda c: score(c, terms), reverse=True)
-        chosen=next((c for c in candidates if c["url"] not in used),None)
-        if not chosen: continue
+        chosen = next((c for c in candidates if c["url"] not in used), None)
+        if not chosen:
+            continue
         try:
-            path=download(chosen,len(selected))
+            path = download(chosen, len(selected))
             used.add(chosen["url"])
             selected.append(path)
-            sources.append({**chosen,"scene":scene_index+1,"scene_text":sentence,"local_file":str(path.relative_to(ROOT))})
-            print(f"Scene {scene_index+1}: {chosen['title']}")
-        except Exception as e: print(f"Scene {scene_index+1} download failed: {e}")
+            sources.append({**chosen, "scene": scene_index + 1, "scene_text": sentence, "local_file": str(path.relative_to(ROOT))})
+            print(f"Scene {scene_index + 1}: {chosen['title']}")
+        except Exception as e:
+            print(f"Scene {scene_index + 1} download failed: {e}")
 
-    (VISUALS/"sources.txt").write_text("\n".join(f"Scene {s['scene']} | {s['local_file']} | {s['title']} | {s['artist']} | {s['license']} | {s['pageurl']} | {s['url']}" for s in sources),encoding="utf-8")
+    (VISUALS / "sources.txt").write_text("\n".join(
+        f"Scene {s['scene']} | {s['local_file']} | {s['title']} | {s['artist']} | {s['license']} | {s['pageurl']} | {s['url']}"
+        for s in sources), encoding="utf-8")
     print(f"Created {len(selected)} scene-matched visuals for {len(scenes)} narration scenes")
 
-if __name__=="__main__": main()
+
+if __name__ == "__main__":
+    main()
