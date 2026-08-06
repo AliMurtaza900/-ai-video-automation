@@ -1,0 +1,57 @@
+name: Test Video Quality (No Gemini)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository without GitHub Actions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/AliMurtaza900/-ai-video-automation.git" repo
+          cd repo
+          git checkout "${GITHUB_SHA}"
+
+      - name: Install ffmpeg
+        working-directory: repo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        working-directory: repo
+        run: python -m pip install -r requirements.txt
+
+      - name: Create fixed test script (no Gemini)
+        working-directory: repo
+        run: |
+          mkdir -p output
+          cat > output/script.txt <<'EOF'
+          In 1945, one man survived an atomic bombing and then faced another just three days later. His story sounds impossible, but it is documented history. He was in Hiroshima when the first bomb exploded. He survived and returned home to Nagasaki. Then the second atomic bomb exploded. Somehow, he survived that too. His story became one of the most extraordinary survival stories of the twentieth century.
+          EOF
+
+      - name: Fetch free test visuals
+        working-directory: repo
+        run: python src/fetch_visuals.py
+
+      - name: Generate test narration with Edge TTS (no Gemini)
+        working-directory: repo
+        run: python src/add_voice.py
+
+      - name: Render upgraded video
+        working-directory: repo
+        run: python src/render_video.py
+
+      - name: Upload test video artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgraded-video-test
+          path: repo/output/test-video.mp4
+          retention-days: 2
