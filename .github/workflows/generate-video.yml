@@ -42,11 +42,15 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python src/main.py
 
+      - name: Fetch relevant free visuals
+        working-directory: repo
+        run: python src/fetch_visuals.py
+
       - name: Generate AI voice and word timings
         working-directory: repo
         run: python src/add_voice.py
 
-      - name: Render MP4 with synchronized captions
+      - name: Render final vertical Short
         working-directory: repo
         run: python src/render_video.py
 
