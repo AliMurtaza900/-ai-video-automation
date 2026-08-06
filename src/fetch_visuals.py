@@ -11,7 +11,7 @@ VISUALS = ASSETS / "visuals"
 VISUALS.mkdir(parents=True, exist_ok=True)
 
 API = "https://commons.wikimedia.org/w/api.php"
-UA = {"User-Agent": "AI-Video-Automation/1.2"}
+UA = {"User-Agent": "AI-Video-Automation/1.3"}
 VIDEO_MIMES = {"video/mp4", "video/webm", "video/ogg"}
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 STOP = set("about after again because before could every first from have into more most never only other over really their there these this those through what when where which while with would your that than they them then were will also some many fact facts interesting people thing story stories history".split())
@@ -83,6 +83,7 @@ def download(c, index):
                 f.write(chunk)
                 total += len(chunk)
                 if total > 150 * 1024 * 1024:
+                    path.unlink(missing_ok=True)
                     raise RuntimeError("media exceeds 150 MB")
     if total < 50000:
         path.unlink(missing_ok=True)
@@ -129,11 +130,24 @@ def main():
         except Exception as e:
             print(f"Scene {scene_index + 1} download failed: {e}")
 
+    # Never allow a failed external search to leave the renderer with nothing.
+    if not selected:
+        from PIL import Image, ImageDraw
+        fallback = VISUALS / "visual_00.jpg"
+        img = Image.new("RGB", (1080, 1920), (18, 24, 40))
+        draw = ImageDraw.Draw(img)
+        draw.text((540, 960), "Visual unavailable\nStory continues", anchor="mm", fill="white", align="center")
+        img.save(fallback, quality=90)
+        sources.append({"scene": 1, "scene_text": scenes[0] if scenes else "", "local_file": str(fallback.relative_to(ROOT)), "title": "Generated fallback card", "artist": "", "license": "Generated", "pageurl": "", "url": ""})
+        selected.append(fallback)
+        print("No external visuals found; created safe local fallback visual")
+
     (VISUALS / "sources.txt").write_text("\n".join(
         f"Scene {s['scene']} | {s['local_file']} | {s['title']} | {s['artist']} | {s['license']} | {s['pageurl']} | {s['url']}"
         for s in sources), encoding="utf-8")
-    print(f"Created {len(selected)} scene-matched visuals for {len(scenes)} narration scenes")
-
+    video_count = sum(p.suffix.lower() in {".mp4", ".webm", ".mov", ".ogv"} for p in selected)
+    image_count = len(selected) - video_count
+    print(f"VISUAL_REPORT videos={video_count} images={image_count} total={len(selected)} scenes={len(scenes)}")
 
 if __name__ == "__main__":
     main()
