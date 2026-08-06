@@ -1,7 +1,5 @@
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
 import subprocess
-import textwrap
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
@@ -11,111 +9,134 @@ OUTPUT.mkdir(exist_ok=True)
 ASSETS.mkdir(exist_ok=True)
 
 W, H, FPS = 1080, 1920, 30
+SHOT_SECONDS = 3.5
 MAX_SECONDS = 45
-FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-FONT_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
-
-def get_font(path, size):
-    try:
-        return ImageFont.truetype(path, size)
-    except OSError:
-        return ImageFont.load_default()
+VIDEO_EXTS = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".ogv"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
 
 def load_caption_timings():
-    timing_file = OUTPUT / "caption_timing.txt"
-    if not timing_file.exists():
+    path = OUTPUT / "caption_timing.txt"
+    if not path.exists():
         return []
     result = []
-    for line in timing_file.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         try:
             start, end, text = line.split("|", 2)
             result.append((float(start), float(end), text.strip()))
         except ValueError:
-            continue
+            pass
     return result
 
 
-def caption_for_frame(timings, frame):
-    t = frame / FPS
-    for start, end, text in timings:
-        if start <= t < end:
-            return text
-    return ""
+def make_srt(timings):
+    path = OUTPUT / "captions.srt"
+
+    def stamp(seconds):
+        seconds = max(0, seconds)
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        ms = int(round((seconds - int(seconds)) * 1000))
+        if ms >= 1000:
+            s += 1
+            ms = 0
+        return f"{h:02}:{m:02}:{s:02},{ms:03}"
+
+    lines = []
+    for i, (start, end, text) in enumerate(timings, 1):
+        if end <= start or not text:
+            continue
+        lines += [str(i), f"{stamp(start)} --> {stamp(end)}", text, ""]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
 
 
-def load_visuals():
-    images = []
+def visual_files():
+    files = []
     for path in sorted(VISUALS.glob("visual_*")):
-        try:
-            images.append(Image.open(path).convert("RGB"))
-        except OSError:
-            pass
-    return images
+        if path.suffix.lower() in VIDEO_EXTS | IMAGE_EXTS:
+            files.append(path)
+    return files
 
 
-def visual_background(images, index):
-    if not images:
-        phase = index / (FPS * 2)
-        return Image.new("RGB", (W, H), (
-            int(10 + 12 * (phase % 1)),
-            int(14 + 10 * ((phase + 0.33) % 1)),
-            int(28 + 18 * ((phase + 0.66) % 1)),
-        ))
-
-    slot = max(1, FPS * 5)
-    image = images[(index // slot) % len(images)].copy()
-    scale = max(W / image.width, H / image.height) * (1.0 + 0.08 * ((index % slot) / slot))
-    nw, nh = int(image.width * scale), int(image.height * scale)
-    image = image.resize((nw, nh), Image.Resampling.LANCZOS)
-    left = max(0, (nw - W) // 2)
-    top = max(0, (nh - H) // 2)
-    return image.crop((left, top, left + W, top + H))
-
-
-def make_frame(index, timings, visuals):
-    img = visual_background(visuals, index)
-    draw = ImageDraw.Draw(img)
-    title_font = get_font(FONT_BOLD, 44)
-    caption_font = get_font(FONT_BOLD, 62)
-    small_font = get_font(FONT_BOLD, 28)
-
-    draw.rounded_rectangle((34, 34, 278, 98), radius=28, fill=(0, 0, 0), outline=(255, 255, 255), width=2)
-    draw.text((156, 66), "AI FACTS", font=title_font, anchor="mm", fill=(255, 255, 255))
-
-    caption = caption_for_frame(timings, index)
-    if caption:
-        wrapped = "\n".join(textwrap.wrap(caption, width=25))
-        bbox = draw.multiline_textbbox((0, 0), wrapped, font=caption_font, spacing=10, align="center")
-        pad = 40
-        box = (W // 2 - (bbox[2] - bbox[0]) // 2 - pad, H // 2 - (bbox[3] - bbox[1]) // 2 - pad, W // 2 + (bbox[2] - bbox[0]) // 2 + pad, H // 2 + (bbox[3] - bbox[1]) // 2 + pad)
-        draw.rounded_rectangle(box, radius=32, fill=(5, 5, 10), outline=(255, 255, 255), width=3)
-        draw.multiline_text((W // 2, H // 2), wrapped, font=caption_font, spacing=10, align="center", anchor="mm", fill=(255, 255, 255))
-
-    draw.text((W // 2, H - 110), "Follow for more facts", font=small_font, anchor="mm", fill=(255, 255, 255))
-    return img
+def ffmpeg_filter_for(path_count):
+    parts = []
+    labels = []
+    for i in range(path_count):
+        label = f"v{i}"
+        parts.append(
+            f"[{i}:v]trim=duration={SHOT_SECONDS},setpts=PTS-STARTPTS,"
+            f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+            f"crop={W}:{H},setsar=1,fps={FPS}[{label}]"
+        )
+        labels.append(f"[{label}]")
+    duration = min(MAX_SECONDS, path_count * SHOT_SECONDS)
+    parts.append("".join(labels) + f"concat=n={path_count}:v=1:a=0,trim=duration={duration},setpts=PTS-STARTPTS[base]")
+    return ";".join(parts), duration
 
 
 def main():
-    script = (OUTPUT / "script.txt").read_text(encoding="utf-8").strip() if (OUTPUT / "script.txt").exists() else ""
+    script_path = OUTPUT / "script.txt"
+    script = script_path.read_text(encoding="utf-8").strip() if script_path.exists() else ""
     if not script:
         raise RuntimeError("Generated script is empty")
+
     timings = load_caption_timings()
     if not timings:
         raise RuntimeError("Caption timing data is missing; generate the voice before rendering")
-    visuals = load_visuals()
-    frames = ASSETS / "frames"
-    frames.mkdir(exist_ok=True)
-    total = FPS * MAX_SECONDS
-    for old in frames.glob("frame_*.png"):
-        old.unlink()
-    for i in range(total):
-        make_frame(i, timings, visuals).save(frames / f"frame_{i:04d}.png")
 
+    files = visual_files()
+    if not files:
+        raise RuntimeError("No visuals found in assets/visuals")
+
+    # Prefer real video clips. Images are retained as a fallback and get a
+    # gentle motion-like treatment from the same crop pipeline.
+    files = files[:max(1, int(MAX_SECONDS / SHOT_SECONDS) + 1)]
+    video_count = sum(p.suffix.lower() in VIDEO_EXTS for p in files)
+    print(f"Using {len(files)} visuals ({video_count} video clips, {len(files) - video_count} images)")
+
+    srt = make_srt(timings)
+    filter_graph, duration = ffmpeg_filter_for(len(files))
+    base = OUTPUT / "video_base.mp4"
     output = OUTPUT / "test-video.mp4"
-    subprocess.run(["ffmpeg", "-y", "-framerate", str(FPS), "-i", str(frames / "frame_%04d.png"), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-vf", "scale=1080:1920", str(output)], check=True)
-    print(f"Created {output}")
+
+    cmd = ["ffmpeg", "-y"]
+    for path in files:
+        if path.suffix.lower() in IMAGE_EXTS:
+            cmd += ["-loop", "1", "-t", str(SHOT_SECONDS), "-i", str(path)]
+        else:
+            cmd += ["-stream_loop", "-1", "-t", str(SHOT_SECONDS), "-i", str(path)]
+
+    cmd += [
+        "-filter_complex", filter_graph,
+        "-map", "[base]",
+        "-an",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "22",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        str(base),
+    ]
+    subprocess.run(cmd, check=True)
+
+    # Add readable, bottom-safe captions in one FFmpeg pass instead of
+    # generating thousands of intermediate PNG frames.
+    subtitle_filter = (
+        f"subtitles={srt.as_posix()}:"
+        "force_style='FontName=DejaVu Sans,FontSize=20,"
+        "Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
+        "BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=180'"
+    )
+    subprocess.run([
+        "ffmpeg", "-y", "-i", str(base), "-vf", subtitle_filter,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+        "-pix_fmt", "yuv420p", "-an", str(output)
+    ], check=True)
+
+    print(f"Created {output} ({duration:.1f}s) without frame-by-frame PNG rendering")
 
 
 if __name__ == "__main__":
