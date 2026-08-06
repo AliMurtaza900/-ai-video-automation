@@ -15,49 +15,53 @@ jobs:
   generate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      REPO_URL: https://github.com/AliMurtaza900/-ai-video-automation.git
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Checkout repository without GitHub Actions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/AliMurtaza900/-ai-video-automation.git" repo
+          cd repo
+          git checkout "${GITHUB_SHA}"
 
       - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        working-directory: repo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
       - name: Install Python dependencies
-        run: pip install -r requirements.txt
+        working-directory: repo
+        run: python -m pip install -r requirements.txt
 
       - name: Generate AI script
+        working-directory: repo
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python src/main.py
 
       - name: Generate AI voice and word timings
+        working-directory: repo
         run: python src/add_voice.py
 
       - name: Render MP4 with synchronized captions
+        working-directory: repo
         run: python src/render_video.py
 
       - name: Combine final video and voice
+        working-directory: repo
         run: |
           ffmpeg -y -i output/test-video.mp4 -i output/voice.mp3 \
             -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac \
             -shortest output/final-video.mp4
 
       - name: Upload final video to YouTube
+        working-directory: repo
         env:
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_PRIVACY: private
         run: python src/youtube_upload.py
-
-      - name: Save generated video artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-video
-          path: output/final-video.mp4
-          if-no-files-found: error
