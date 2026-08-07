@@ -13,7 +13,7 @@ VISUALS.mkdir(parents=True, exist_ok=True)
 
 COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 OPENVERSE_API = "https://api.openverse.org/v1/images/"
-UA = {"User-Agent": "AI-Video-Automation/3.3 (GitHub Actions)"}
+UA = {"User-Agent": "AI-Video-Automation/3.4 (GitHub Actions)"}
 VIDEO_MIMES = {"video/mp4", "video/webm", "video/ogg"}
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 STOP = set("about after again because before could every first from have into more most never only other over really their there these this those through what when where which while with would your that than they them then were will also some many fact facts interesting people thing story stories history video videos footage of the and are was for not you but has had its our their documentary image images clip clips scene scenes".split())
@@ -67,7 +67,7 @@ def normalize_tags(tags):
         if isinstance(tag, str):
             values.append(tag)
         elif isinstance(tag, dict):
-            for key in ("name", "title", "tag"):
+            for key in ("name", "title", "tag", "label"):
                 if isinstance(tag.get(key), str):
                     values.append(tag[key])
                     break
@@ -75,13 +75,20 @@ def normalize_tags(tags):
 
 
 def openverse_search(query, limit=12):
-    data = request_json(OPENVERSE_API, {"q": query, "page": 1, "page_size": limit, "mature": "false"})
+    try:
+        data = request_json(OPENVERSE_API, {"q": query, "page": 1, "page_size": limit, "mature": "false"})
+    except Exception as exc:
+        print(f"Openverse search failed for '{query}': {exc}")
+        return []
     results = []
     for item in data.get("results", []):
         url = item.get("url")
         if not url:
             continue
-        width, height = int(item.get("width") or 0), int(item.get("height") or 0)
+        try:
+            width, height = int(item.get("width") or 0), int(item.get("height") or 0)
+        except (TypeError, ValueError):
+            width, height = 0, 0
         if width < 1000 or height < 700:
             continue
         tags = normalize_tags(item.get("tags"))
@@ -115,7 +122,10 @@ def commons_search(query, video=False, limit=10):
             continue
         if not video and not url.lower().split("?")[0].endswith(IMAGE_EXTS):
             continue
-        width, height = int(info.get("width") or 0), int(info.get("height") or 0)
+        try:
+            width, height = int(info.get("width") or 0), int(info.get("height") or 0)
+        except (TypeError, ValueError):
+            width, height = 0, 0
         if width < 720 or height < 480:
             continue
         meta = info.get("extmetadata", {})
@@ -172,11 +182,9 @@ def download(candidate, index):
 
 
 def make_local_fallback(index, scene):
-    # Safety fallback only. It is intentionally graphical, not a narration
-    # text card, so a provider outage never produces a plain-text video.
+    # Safety fallback only. It is graphical, not a narration text card.
     path = VISUALS / f"visual_{index:02d}.svg"
-    safe = html.escape(scene[:90])
-    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0b1020"/><stop offset=".55" stop-color="#172554"/><stop offset="1" stop-color="#312e81"/></linearGradient><radialGradient id="r"><stop offset="0" stop-color="#60a5fa" stop-opacity=".55"/><stop offset="1" stop-color="#60a5fa" stop-opacity="0"/></radialGradient></defs><rect width="1080" height="1920" fill="url(#g)"/><circle cx="830" cy="380" r="420" fill="url(#r)"/><circle cx="180" cy="1540" r="520" fill="#22d3ee" opacity=".10"/><path d="M0 1450 C260 1250 430 1700 700 1430 S980 1280 1080 1500 L1080 1920 L0 1920Z" fill="#020617" opacity=".65"/><text x="70" y="1720" fill="#e5e7eb" font-family="DejaVu Sans" font-size="24" opacity=".75">VISUAL FALLBACK</text><text x="70" y="1780" fill="#fff" font-family="DejaVu Sans" font-size="30" font-weight="bold">{safe}</text></svg>'''
+    svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#020617"/><stop offset=".5" stop-color="#1e3a8a"/><stop offset="1" stop-color="#4c1d95"/></linearGradient><radialGradient id="r"><stop offset="0" stop-color="#38bdf8" stop-opacity=".65"/><stop offset="1" stop-color="#38bdf8" stop-opacity="0"/></radialGradient></defs><rect width="1080" height="1920" fill="url(#g)"/><circle cx="820" cy="350" r="430" fill="url(#r)"/><circle cx="160" cy="1560" r="480" fill="#a78bfa" opacity=".12"/><path d="M0 1480 C260 1260 430 1710 700 1430 S980 1280 1080 1500 L1080 1920 L0 1920Z" fill="#000" opacity=".45"/><circle cx="190" cy="350" r="90" fill="#fff" opacity=".08"/><circle cx="360" cy="350" r="55" fill="#fff" opacity=".07"/><circle cx="490" cy="350" r="35" fill="#fff" opacity=".06"/></svg>'''
     path.write_text(svg, encoding="utf-8")
     return path
 
@@ -220,7 +228,6 @@ def main():
                 if candidate["url"] not in used and score(candidate, terms, scene) >= 18:
                     chosen = candidate; break
         if chosen is None:
-            # One conservative broad attempt; never fail the whole video.
             for query in ("documentary footage", "nature footage", "city footage"):
                 candidates = commons_search(query, video=True, limit=6)
                 candidate = next((c for c in sorted(candidates, key=lambda x: score(x, terms, scene, True), reverse=True) if c["url"] not in used and score(c, terms, scene, True) >= 28), None)
