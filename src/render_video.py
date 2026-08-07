@@ -48,11 +48,23 @@ def visual_files():
     return [p for p in sorted(VISUALS.glob("visual_*")) if p.suffix.lower() in VIDEO_EXTS | IMAGE_EXTS]
 
 
-def ffmpeg_filter_for(path_count, shot_seconds):
-    parts=[]; labels=[]
-    for i in range(path_count):
-        label=f"v{i}"; parts.append(f"[{i}:v]trim=duration={shot_seconds},setpts=PTS-STARTPTS,scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps={FPS}[{label}]"); labels.append(f"[{label}]")
-    duration=min(MAX_SECONDS,path_count*shot_seconds); parts.append("".join(labels)+f"concat=n={path_count}:v=1:a=0,trim=duration={duration},setpts=PTS-STARTPTS[base]")
+def ffmpeg_filter_for(files, shot_seconds):
+    parts=[]; labels=[]; frames=max(1, int(round(shot_seconds * FPS)))
+    for i, path in enumerate(files):
+        label=f"v{i}"
+        if path.suffix.lower() in IMAGE_EXTS:
+            # Give still images gentle cinematic motion so photos do not feel
+            # like frozen slides. Captions remain the only text overlay.
+            chain=(f"[{i}:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
+                   f"crop={W}:{H},zoompan=z='min(zoom+0.00045,1.08)':"
+                   f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s={W}x{H}:fps={FPS},"
+                   f"trim=duration={shot_seconds},setpts=PTS-STARTPTS,setsar=1[{label}]")
+        else:
+            chain=(f"[{i}:v]trim=duration={shot_seconds},setpts=PTS-STARTPTS,"
+                   f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps={FPS}[{label}]")
+        parts.append(chain); labels.append(f"[{label}]")
+    duration=min(MAX_SECONDS,len(files)*shot_seconds)
+    parts.append("".join(labels)+f"concat=n={len(files)}:v=1:a=0,trim=duration={duration},setpts=PTS-STARTPTS[base]")
     return ";".join(parts),duration
 
 
@@ -68,10 +80,11 @@ def main():
     files=visual_files()
     if not files: raise RuntimeError("No visuals found in assets/visuals")
 
-    files=files[:max(1,int(audio_duration/DEFAULT_SHOT_SECONDS)+1)]; shot_seconds=audio_duration/len(files)
+    files=files[:max(1,int(audio_duration/DEFAULT_SHOT_SECONDS)+1)]
+    shot_seconds=audio_duration/len(files)
     video_count=sum(p.suffix.lower() in VIDEO_EXTS for p in files)
     print(f"Using {len(files)} visuals ({video_count} video clips, {len(files)-video_count} images) for {audio_duration:.1f}s narration")
-    srt=make_srt(timings); filter_graph,duration=ffmpeg_filter_for(len(files),shot_seconds)
+    srt=make_srt(timings); filter_graph,duration=ffmpeg_filter_for(files,shot_seconds)
     base=OUTPUT/"video_base.mp4"; output=OUTPUT/"test-video.mp4"
 
     cmd=["ffmpeg","-y"]
@@ -87,6 +100,6 @@ def main():
     captioned=OUTPUT/"video_captioned.mp4"
     subprocess.run(["ffmpeg","-y","-i",str(base),"-vf",subtitle_filter,"-c:v","libx264","-preset","veryfast","-crf","20","-pix_fmt","yuv420p","-an",str(captioned)],check=True)
     subprocess.run(["ffmpeg","-y","-i",str(captioned),"-i",str(audio),"-map","0:v:0","-map","1:a:0","-c:v","copy","-c:a","aac","-b:a","128k","-shortest","-movflags","+faststart",str(output)],check=True)
-    final_duration=media_duration(output); print(f"Created {output} ({final_duration:.1f}s) with narration audio and captions")
+    final_duration=media_duration(output); print(f"Created {output} ({final_duration:.1f}s) with narration audio, captions, and motion effects")
 
 if __name__ == "__main__": main()
