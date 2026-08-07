@@ -10,11 +10,11 @@ ASSETS = ROOT / "assets"
 VISUALS = ASSETS / "visuals"
 VISUALS.mkdir(parents=True, exist_ok=True)
 
-API = "https://commons.wikimedia.org/w/api.php"
-UA = {"User-Agent": "AI-Video-Automation/2.0"}
+COMMONS_API = "https://commons.wikimedia.org/w/api.php"
+UA = {"User-Agent": "AI-Video-Automation/3.0"}
 VIDEO_MIMES = {"video/mp4", "video/webm", "video/ogg"}
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
-STOP = set("about after again because before could every first from have into more most never only other over really their there these this those through what when where which while with would your that than they them then were will also some many fact facts interesting people thing story stories history video videos footage footage of the".split())
+STOP = set("about after again because before could every first from have into more most never only other over really their there these this those through what when where which while with would your that than they them then were will also some many fact facts interesting people thing story stories history video videos footage of the and are was for not you but has had its our their".split())
 
 
 def clean(value):
@@ -22,31 +22,29 @@ def clean(value):
 
 
 def scene_sentences(script):
-    return [clean(s) for s in re.split(r"(?<=[.!?])\s+", script.strip()) if clean(s)][:12]
+    parts = re.split(r"(?<=[.!?])\s+", script.strip())
+    return [clean(s) for s in parts if clean(s)][:12]
 
 
 def terms_for_scene(sentence):
     words = re.findall(r"[A-Za-z]{4,}", sentence.lower())
     out = []
-    for w in words:
-        if w not in STOP and w not in out:
-            out.append(w)
-    return out[:6] or ["documentary"]
+    for word in words:
+        if word not in STOP and word not in out:
+            out.append(word)
+    return out[:7] or ["documentary"]
 
 
-def search_media(query, video=True):
-    # Commons search works better with natural phrases than a literal
-    # filetype:video suffix. Ask for multimedia and filter by MIME locally.
+def search_media(query, video=True, limit=40):
     params = {
         "action": "query", "format": "json", "generator": "search",
-        "gsrsearch": query, "gsrnamespace": 6, "gsrlimit": 30,
-        "prop": "imageinfo|info",
-        "iiprop": "url|mime|size|extmetadata",
+        "gsrsearch": query, "gsrnamespace": 6, "gsrlimit": limit,
+        "prop": "imageinfo|info", "iiprop": "url|mime|size|extmetadata",
         "inprop": "url",
     }
-    r = requests.get(API, params=params, timeout=20, headers=UA)
-    r.raise_for_status()
-    pages = r.json().get("query", {}).get("pages", {})
+    response = requests.get(COMMONS_API, params=params, timeout=25, headers=UA)
+    response.raise_for_status()
+    pages = response.json().get("query", {}).get("pages", {})
     result = []
     for page in pages.values():
         info = page.get("imageinfo", [{}])[0]
@@ -72,35 +70,34 @@ def search_media(query, video=True):
     return result
 
 
-def score(candidate, terms, scene):
+def score(candidate, terms, scene, prefer_video=False):
     title = candidate["title"].lower()
     desc = candidate["description"].lower()
     scene_words = set(re.findall(r"[a-z]{4,}", scene.lower())) - STOP
-    value = 0
+    score = 0
     for term in terms:
         if term in title:
-            value += 10
+            score += 12
         elif term in desc:
-            value += 4
-    # Reward candidates whose metadata contains several scene-specific words.
-    value += min(12, sum(2 for word in scene_words if word in title or word in desc))
+            score += 5
+    score += min(16, sum(2 for word in scene_words if word in title or word in desc))
     if candidate["mime"] in VIDEO_MIMES:
-        value += 20
+        score += 25 if prefer_video else 10
     if candidate["license"]:
-        value += 3
-    return value
+        score += 3
+    return score
 
 
 def download(candidate, index):
-    r = requests.get(candidate["url"], timeout=120, headers=UA, stream=True)
-    r.raise_for_status()
-    suffix = ".webm" if candidate["mime"] == "video/webm" else ".mp4" if candidate["mime"] == "video/mp4" else ".ogg" if candidate["mime"] == "video/ogg" else ".jpg"
+    response = requests.get(candidate["url"], timeout=120, headers=UA, stream=True)
+    response.raise_for_status()
+    suffix = ".mp4" if candidate["mime"] == "video/mp4" else ".webm" if candidate["mime"] == "video/webm" else ".ogg" if candidate["mime"] == "video/ogg" else ".jpg"
     path = VISUALS / f"visual_{index:02d}{suffix}"
     total = 0
-    with path.open("wb") as f:
-        for chunk in r.iter_content(1024 * 1024):
+    with path.open("wb") as file:
+        for chunk in response.iter_content(1024 * 1024):
             if chunk:
-                f.write(chunk)
+                file.write(chunk)
                 total += len(chunk)
                 if total > 150 * 1024 * 1024:
                     path.unlink(missing_ok=True)
@@ -111,14 +108,16 @@ def download(candidate, index):
     return path
 
 
-def candidates_for_scene(scene, terms, video):
+def search_candidates(scene, terms, video):
+    # Broad-to-specific searches give us several independent chances to find
+    # usable public footage instead of failing on one overly-specific query.
     queries = [
+        " ".join(terms[:5]),
         " ".join(terms[:4]),
         " ".join(terms[:3]),
         " ".join(terms[:2]),
     ]
-    seen = set()
-    candidates = []
+    candidates, seen = [], set()
     for query in queries:
         try:
             for candidate in search_media(query, video):
@@ -127,55 +126,75 @@ def candidates_for_scene(scene, terms, video):
                     candidates.append(candidate)
         except Exception as exc:
             print(f"Search failed for '{query}': {exc}")
-    candidates.sort(key=lambda c: score(c, terms, scene), reverse=True)
+    candidates.sort(key=lambda item: score(item, terms, scene, prefer_video=video), reverse=True)
     return candidates
 
 
 def main():
-    script = (OUTPUT / "script.txt").read_text(encoding="utf-8").strip()
+    script_path = OUTPUT / "script.txt"
+    if not script_path.exists():
+        raise RuntimeError("Generated script is missing")
+    script = script_path.read_text(encoding="utf-8").strip()
     if not script:
         raise RuntimeError("Generated script is empty")
 
-    for p in VISUALS.glob("visual_*"):
-        p.unlink()
-    for p in VISUALS.glob("*.txt"):
-        p.unlink()
+    for path in VISUALS.glob("visual_*"):
+        path.unlink()
+    (VISUALS / "sources.txt").unlink(missing_ok=True)
 
     scenes = scene_sentences(script)
     selected, used, sources = [], set(), []
 
-    for scene_index, scene in enumerate(scenes):
+    for scene_index, scene in enumerate(scenes, start=1):
         terms = terms_for_scene(scene)
-        # Prefer real moving footage. Only fall back to still images when a
-        # scene has no usable video candidates.
-        candidates = candidates_for_scene(scene, terms, True)
-        chosen = next((c for c in candidates if c["url"] not in used and score(c, terms, scene) >= 20), None)
+        chosen = None
 
-        if not chosen:
-            candidates = candidates_for_scene(scene, terms, False)
-            chosen = next((c for c in candidates if c["url"] not in used and score(c, terms, scene) >= 8), None)
+        # Tier 1: relevant public video.
+        for candidate in search_candidates(scene, terms, True):
+            if candidate["url"] not in used and score(candidate, terms, scene, True) >= 18:
+                chosen = candidate
+                break
 
-        if not chosen:
-            print(f"Scene {scene_index + 1}: no sufficiently relevant public visual found")
+        # Tier 2: relevant public still image. This keeps the video alive when
+        # Commons has no suitable moving footage for a specific scene.
+        if chosen is None:
+            for candidate in search_candidates(scene, terms, False):
+                if candidate["url"] not in used and score(candidate, terms, scene) >= 7:
+                    chosen = candidate
+                    break
+
+        # Tier 3: broad documentary fallback. Never fail the entire render
+        # because one scene has weak search coverage.
+        if chosen is None:
+            fallback_queries = ["documentary", "people", "nature", "city", "technology"]
+            fallback_candidates = []
+            for query in fallback_queries:
+                try:
+                    fallback_candidates.extend(search_media(query, True, 20))
+                except Exception as exc:
+                    print(f"Fallback search failed for '{query}': {exc}")
+            fallback_candidates.sort(key=lambda item: score(item, terms, scene, True), reverse=True)
+            chosen = next((c for c in fallback_candidates if c["url"] not in used), None)
+
+        if chosen is None:
+            print(f"Scene {scene_index}: no public visual found; scene will be represented by the renderer")
             continue
 
         try:
             path = download(chosen, len(selected))
-            used.add(chosen["url"])
-            selected.append(path)
-            sources.append({
-                **chosen,
-                "scene": scene_index + 1,
-                "scene_text": scene,
-                "local_file": str(path.relative_to(ROOT)),
-                "score": score(chosen, terms, scene),
-            })
-            print(f"Scene {scene_index + 1}: {chosen['title']} (score={sources[-1]['score']})")
         except Exception as exc:
-            print(f"Scene {scene_index + 1} download failed: {exc}")
+            print(f"Scene {scene_index} download failed: {exc}")
+            continue
+
+        used.add(chosen["url"])
+        selected.append(path)
+        chosen_score = score(chosen, terms, scene, chosen["mime"] in VIDEO_MIMES)
+        sources.append({**chosen, "scene": scene_index, "scene_text": scene,
+                        "local_file": str(path.relative_to(ROOT)), "score": chosen_score})
+        print(f"Scene {scene_index}: {chosen['title']} (score={chosen_score}, mime={chosen['mime']})")
 
     if not selected:
-        raise RuntimeError("No sufficiently relevant public visuals were found")
+        raise RuntimeError("No public visuals could be downloaded")
 
     (VISUALS / "sources.txt").write_text(
         "\n".join(
@@ -184,9 +203,8 @@ def main():
         ),
         encoding="utf-8",
     )
-    video_count = sum(p.suffix.lower() in VIDEO_MIMES for p in selected)
-    image_count = len(selected) - video_count
-    print(f"VISUAL_REPORT videos={video_count} images={image_count} total={len(selected)} scenes={len(scenes)}")
+    videos = sum(s["mime"] in VIDEO_MIMES for s in sources)
+    print(f"VISUAL_REPORT videos={videos} images={len(sources)-videos} total={len(sources)} scenes={len(scenes)}")
 
 
 if __name__ == "__main__":
