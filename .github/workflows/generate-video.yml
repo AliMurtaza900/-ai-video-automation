@@ -2,17 +2,16 @@ name: Generate AI Video
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
   schedule:
     - cron: '0 6 * * *'
     - cron: '0 12 * * *'
     - cron: '0 18 * * *'
     - cron: '0 22 * * *'
 
+# Never run two video generations at the same time. Scheduled runs and
+# manual tests share one queue, while code pushes do not start generation.
 concurrency:
-  group: generate-ai-video-${{ github.event.schedule || github.run_id }}
+  group: generate-ai-video
   cancel-in-progress: false
 
 permissions:
