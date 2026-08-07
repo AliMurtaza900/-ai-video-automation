@@ -6,28 +6,36 @@ on:
     branches:
       - main
   schedule:
+    # Four independent daily slots, UTC. Change these later if needed.
+    - cron: '0 6 * * *'
     - cron: '0 12 * * *'
+    - cron: '0 18 * * *'
+    - cron: '0 22 * * *'
 
-# Prevent a pile-up of identical video generations when several commits land
-# close together. A newer run replaces an older queued/in-progress run.
+# Do NOT cancel one scheduled video because another scheduled slot starts.
+# Each slot gets its own run and can recover independently.
 concurrency:
-  group: generate-ai-video-main
-  cancel-in-progress: true
+  group: generate-ai-video-${{ github.event.schedule || github.run_id }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
+env:
+  PYTHONUNBUFFERED: '1'
+  FFMPEG_THREADS: '2'
+  REPO_URL: https://github.com/AliMurtaza900/-ai-video-automation.git
+
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      REPO_URL: https://github.com/AliMurtaza900/-ai-video-automation.git
+    timeout-minutes: 45
     steps:
       - name: Checkout repository without GitHub Actions
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -e
           git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/AliMurtaza900/-ai-video-automation.git" repo
           cd repo
           git checkout "${GITHUB_SHA}"
@@ -42,30 +50,65 @@ jobs:
         working-directory: repo
         run: python -m pip install -r requirements.txt
 
-      - name: Generate AI script
+      - name: Generate AI script (retry transient failures)
         working-directory: repo
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python src/main.py
+        run: |
+          for attempt in 1 2 3; do
+            python src/main.py && exit 0
+            echo "Script generation attempt $attempt failed; retrying..."
+            sleep $((attempt * 10))
+          done
+          exit 1
 
-      - name: Fetch relevant free visuals
+      - name: Fetch relevant free visuals (retry transient failures)
         working-directory: repo
-        run: python src/fetch_visuals.py
+        run: |
+          for attempt in 1 2 3; do
+            python src/fetch_visuals.py && exit 0
+            echo "Visual download attempt $attempt failed; retrying..."
+            sleep $((attempt * 10))
+          done
+          exit 1
 
       - name: Generate AI voice and word timings
         working-directory: repo
-        run: python src/add_voice.py
+        run: |
+          for attempt in 1 2 3; do
+            python src/add_voice.py && exit 0
+            echo "Voice generation attempt $attempt failed; retrying..."
+            sleep $((attempt * 10))
+          done
+          exit 1
 
       - name: Render final vertical Short
         working-directory: repo
         run: python src/render_video.py
 
-      - name: Combine final video and voice
+      - name: Validate final video before upload
+        working-directory: repo
+        run: |
+          set -e
+          test -s output/test-video.mp4
+          test -s output/voice.mp3
+          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of csv=p=0 output/test-video.mp4
+          ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate -of csv=p=0 output/test-video.mp4
+          duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/test-video.mp4)
+          python - "$duration" <<'PY'
+          import sys
+          d = float(sys.argv[1])
+          if d < 10 or d > 46:
+              raise SystemExit(f"Invalid video duration: {d:.2f}s")
+          print(f"Video validation passed: {d:.2f}s")
+          PY
+
+      - name: Prepare upload copy
         working-directory: repo
         run: |
           ffmpeg -y -i output/test-video.mp4 -i output/voice.mp3 \
-            -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac \
-            -shortest output/final-video.mp4
+            -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -b:a 128k \
+            -shortest -movflags +faststart output/final-video.mp4
 
       - name: Upload final video to YouTube
         working-directory: repo
