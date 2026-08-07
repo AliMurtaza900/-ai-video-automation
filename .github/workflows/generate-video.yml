@@ -8,8 +8,6 @@ on:
     - cron: '0 18 * * *'
     - cron: '0 22 * * *'
 
-# Never run two video generations at the same time. Scheduled runs and
-# manual tests share one queue, while code pushes do not start generation.
 concurrency:
   group: generate-ai-video
   cancel-in-progress: false
@@ -84,7 +82,7 @@ jobs:
         working-directory: repo
         run: |
           for attempt in 1 2 3; do
-            python src/fetch_visuals.py && exit 0
+            python src/fetch_visuals_v2.py && exit 0
             echo "Visual download attempt $attempt failed; retrying..."
             sleep $((attempt * 10))
           done
