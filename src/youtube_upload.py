@@ -4,7 +4,6 @@ import os
 import time
 from pathlib import Path
 
-import requests
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -44,14 +43,25 @@ def set_thumbnail(youtube, video_id, thumbnail):
         try:
             youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(str(thumbnail), mimetype="image/jpeg")).execute()
             print(f"Thumbnail set for YouTube video: {video_id}")
-            return
+            return True
         except HttpError as exc:
             status = getattr(exc.resp, "status", None)
+            if status == 403:
+                # Upload permission and thumbnail permission are separate on YouTube.
+                # A channel without custom-thumbnail permission must not make an otherwise
+                # successful video upload fail.
+                print("WARNING: YouTube rejected the custom thumbnail (403 permission). Video upload will remain successful.")
+                return False
             if status not in {429, 500, 502, 503, 504} or attempt == 5:
-                raise
+                print(f"WARNING: Could not set thumbnail after {attempt} attempts: {exc}")
+                return False
             delay = min(60, 5 * (2 ** (attempt - 1)))
             print(f"Thumbnail API temporarily failed ({status}); retrying in {delay}s...")
             time.sleep(delay)
+        except Exception as exc:
+            print(f"WARNING: Thumbnail operation failed: {exc}")
+            return False
+    return False
 
 
 def main():
@@ -110,5 +120,4 @@ def main():
     print("Uploaded YouTube video:", youtube_id)
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
