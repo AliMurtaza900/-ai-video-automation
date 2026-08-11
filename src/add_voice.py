@@ -27,19 +27,20 @@ def duration_seconds(path: Path) -> float:
 
 
 def make_caption_timings(text: str, duration: float):
-    # Split at natural pauses first, then keep captions short enough for Shorts.
+    # Short, punchy captions are easier to read on a phone and leave less text
+    # covering the visual. Split at natural pauses, then cap each caption at 6 words.
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
     chunks = []
     for sentence in sentences:
         words = sentence.split()
-        for i in range(0, len(words), 7):
-            chunks.append(" ".join(words[i:i + 7]))
+        for i in range(0, len(words), 6):
+            chunks.append(" ".join(words[i:i + 6]))
 
     if not chunks:
         return []
 
-    # Allocate time by character count. This follows speech much better than
-    # a fixed duration per caption because longer phrases generally take longer.
+    # Allocate time by character count. This tracks speech length better than
+    # giving every caption an identical duration.
     weights = [max(1, len(c.replace(" ", ""))) for c in chunks]
     total_weight = sum(weights)
     timings = []
