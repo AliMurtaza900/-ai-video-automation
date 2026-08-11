@@ -14,11 +14,20 @@ DATA.mkdir(exist_ok=True)
 
 MODELS = ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
 BASE_PROMPT = """
-Create a short vertical social-media video concept about ONE specific interesting fact.
-Return a concise narration script only, suitable for a 30-45 second video.
-Start with a strong hook and end with a curiosity-driven line.
-Do not repeat any recent topic/concept listed below. Pick a clearly different subject,
-not merely a different wording of the same fact.
+Create one original short-form video narration about ONE specific, genuinely interesting fact.
+The finished narration will be voiced and edited automatically for a vertical YouTube Short.
+
+STRICT OUTPUT RULES:
+- Return narration only. No title, labels, bullets, markdown, emojis, stage directions, or quotation marks.
+- Aim for 75-105 words so the finished narration naturally lands around 30-45 seconds.
+- Open with a punchy curiosity hook in the first sentence.
+- Use short, natural sentences with varied rhythm. Avoid filler and repeated phrases.
+- Explain the fact clearly enough that a viewer understands why it is surprising.
+- End with a memorable curiosity/payoff line rather than "like and subscribe."
+- Do not invent statistics, names, dates, quotes, or claims. If a detail is uncertain, leave it out.
+- Keep the topic safe for general audiences and suitable for monetized YouTube Shorts.
+- Make every sentence visually describable so the video can find useful public-domain/open-license imagery.
+- Do not repeat any recent topic/concept below. Choose a clearly different subject, not a rewording.
 
 Recent topics/scripts to avoid:
 {recent}
@@ -36,8 +45,6 @@ def load_history():
 
 def save_history(script):
     history = load_history()
-    # Store a compact fingerprint of the generated concept. This avoids
-    # repository growth while giving Gemini useful recent context.
     fingerprint = " ".join(script.lower().split())[:180]
     if fingerprint in history:
         return
@@ -58,6 +65,16 @@ def generate_with_retry(client, model, prompt, attempts=4):
             time.sleep(delay)
 
 
+def validate_script(script):
+    words = script.split()
+    if not 60 <= len(words) <= 125:
+        raise RuntimeError(f"Generated narration length is {len(words)} words; expected 60-125")
+    if any(token in script for token in ("```", "**", "#")):
+        raise RuntimeError("Generated narration contains formatting instead of narration-only output")
+    if script.count("!") > 3:
+        raise RuntimeError("Generated narration is excessively punctuated")
+
+
 def main():
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -70,21 +87,28 @@ def main():
 
     last_error = None
     for model in MODELS:
-        try:
-            response = generate_with_retry(client, model, prompt)
-            script = (response.text or "").strip()
-            if not script:
-                raise RuntimeError(f"Gemini returned an empty response from {model}")
-            (OUTPUT / "script.txt").write_text(script, encoding="utf-8")
-            save_history(script)
-            print(script)
-            print(f"Script generated successfully with {model}.")
-            return
-        except errors.ServerError as exc:
-            last_error = exc
-            print(f"{model} unavailable; trying the next model...")
+        for generation_attempt in range(2):
+            try:
+                response = generate_with_retry(client, model, prompt)
+                script = (response.text or "").strip()
+                if not script:
+                    raise RuntimeError(f"Gemini returned an empty response from {model}")
+                validate_script(script)
+                (OUTPUT / "script.txt").write_text(script, encoding="utf-8")
+                save_history(script)
+                print(script)
+                print(f"Script generated successfully with {model} ({len(script.split())} words).")
+                return
+            except errors.ServerError as exc:
+                last_error = exc
+                print(f"{model} unavailable; trying again or the next model...")
+            except RuntimeError as exc:
+                last_error = exc
+                print(f"{model} produced an invalid narration: {exc}")
+                if generation_attempt == 0:
+                    prompt += "\nIMPORTANT: The previous output failed validation. Regenerate it within all rules."
 
-    raise RuntimeError(f"All Gemini models were temporarily unavailable: {last_error}")
+    raise RuntimeError(f"No valid narration was generated: {last_error}")
 
 
 if __name__ == "__main__":
