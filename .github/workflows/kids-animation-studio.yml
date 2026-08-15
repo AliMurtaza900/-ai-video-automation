@@ -6,13 +6,13 @@ on:
       content_type:
         description: "Content type"
         required: true
-        default: "story"
+        default: "poem"
         type: choice
         options: [poem, story]
       topic:
         description: "Story or poem topic"
         required: true
-        default: "Milo and the Little Star"
+        default: "Milo and the Little Flower"
         type: string
       duration:
         description: "Target duration in minutes"
@@ -47,9 +47,9 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install system tools
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt && pip install piper-tts==1.6.0
       - name: Compile Python
         run: python -m compileall -q src tests
       - name: Run tests
@@ -65,18 +65,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install free local production tools
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
+      - name: Install production tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt && pip install piper-tts==1.6.0
+      - name: Download pinned local neural voice
+        run: |
+          mkdir -p voices
+          python -m piper.download_voices en_US-lessac-medium --data-dir voices
+          test -s voices/en_US-lessac-medium.onnx
+          test -s voices/en_US-lessac-medium.onnx.json
       - name: Compile Python
         run: python -m compileall -q src tests
-      - name: Run animation tests
+      - name: Run tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Validate production inputs
         env:
-          CONTENT_TYPE: ${{ inputs.content_type || 'story' }}
-          TOPIC: ${{ inputs.topic || 'Milo and the Little Star' }}
+          CONTENT_TYPE: ${{ inputs.content_type || 'poem' }}
+          TOPIC: ${{ inputs.topic || 'Milo and the Little Flower' }}
           DURATION: ${{ inputs.duration || '1' }}
         run: |
           python - <<'PY'
@@ -87,23 +93,29 @@ jobs:
           assert 1 <= minutes <= 10
           print('Production inputs validated')
           PY
-      - name: Verify zero-cost production mode
-        run: |
-          ! grep -R "google-genai\|GEMINI_API_KEY\|VEO_MODEL\|generate_videos" -n src/golden_cartoon_renderer.py requirements.txt
-      - name: Generate golden animated episode
+      - name: Generate real scene-based cartoon
         env:
-          CONTENT_TYPE: ${{ inputs.content_type || 'story' }}
-          TOPIC: ${{ inputs.topic || 'Milo and the Little Star' }}
+          CONTENT_TYPE: ${{ inputs.content_type || 'poem' }}
+          TOPIC: ${{ inputs.topic || 'Milo and the Little Flower' }}
           DURATION: ${{ inputs.duration || '1' }}
-        run: python src/golden_cartoon_renderer.py
-      - name: Validate generated MP4
+          PIPER_MODEL: ${{ github.workspace }}/voices/en_US-lessac-medium.onnx
+        run: python src/kids_animation_production.py
+      - name: Validate final media streams and metadata
         run: |
           test -s output/kids_animation/kids-animation.mp4
+          test -s output/kids_animation/production.json
+          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of default=noprint_wrappers=1 output/kids_animation/kids-animation.mp4
+          ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate,channels -of default=noprint_wrappers=1 output/kids_animation/kids-animation.mp4
           ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 output/kids_animation/kids-animation.mp4
+      - name: Verify audio is not silent
+        run: |
+          ffmpeg -hide_banner -i output/kids_animation/kids-animation.mp4 -af volumedetect -f null - 2> output/kids_animation/volumedetect.txt || true
+          grep -E "mean_volume|max_volume" output/kids_animation/volumedetect.txt
+          ! grep -q "mean_volume: -inf dB" output/kids_animation/volumedetect.txt
       - name: Upload animation artifact
         uses: actions/upload-artifact@v4
         with:
-          name: golden-kids-animation-${{ github.run_number }}
+          name: kids-animation-${{ github.run_number }}
           path: output/kids_animation/
           if-no-files-found: error
           retention-days: 7
@@ -113,12 +125,25 @@ jobs:
       - name: Upload to YouTube only when explicitly enabled
         if: github.event_name == 'workflow_dispatch' && inputs.upload_to_youtube == true
         env:
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_TITLE: ${{ inputs.topic }}
-          YOUTUBE_DESCRIPTION: "A gentle animated children's story created with our zero-cost local cartoon studio."
+          YOUTUBE_DESCRIPTION: "An original children's animated poem or story created by our zero-cost cartoon studio."
+          YOUTUBE_PRIVACY: private
           VIDEO_GOAL: ${{ inputs.topic }}
         run: |
+          rm -f output/youtube_upload.json
           python src/youtube_upload.py
           test -s output/youtube_upload.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('output/youtube_upload.json').read_text(encoding='utf-8'))
+          assert data.get('youtube_id'), 'missing YouTube video ID'
+          assert data.get('sha256'), 'missing uploaded-video hash'
+          print('Verified YouTube video ID:', data['youtube_id'])
+          PY
       - name: Publish upload record as artifact
         if: github.event_name == 'workflow_dispatch' && inputs.upload_to_youtube == true
         uses: actions/upload-artifact@v4
