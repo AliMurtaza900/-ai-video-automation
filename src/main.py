@@ -17,6 +17,9 @@ BASE_PROMPT = """
 Create one original short-form video narration about ONE specific, genuinely interesting fact.
 The finished narration will be voiced and edited automatically for a vertical YouTube Short.
 
+PRIMARY GOAL:
+{goal}
+
 STRICT OUTPUT RULES:
 - Return narration only. No title, labels, bullets, markdown, emojis, stage directions, or quotation marks.
 - Aim for 75-105 words so the finished narration naturally lands around 30-45 seconds.
@@ -83,7 +86,10 @@ def main():
     client = genai.Client(api_key=api_key)
     history = load_history()
     recent = "\n".join(f"- {item}" for item in history[-20:]) or "- none yet"
-    prompt = BASE_PROMPT.format(recent=recent)
+    goal = os.environ.get("VIDEO_GOAL", "Create the best current AI automation YouTube Short").strip()
+    if not goal:
+        goal = "Create the best current AI automation YouTube Short"
+    prompt = BASE_PROMPT.format(goal=goal, recent=recent)
 
     last_error = None
     for model in MODELS:
