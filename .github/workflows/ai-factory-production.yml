@@ -66,16 +66,18 @@ jobs:
           AI_FACTORY_VIDEO_TIMEOUT: '3000'
         run: |
           set -euo pipefail
-          python -m factory.production "$VIDEO_GOAL" --workspace "${{ github.workspace }}/factory/data/workspaces"
+          python -m factory.production "$VIDEO_GOAL" \
+            --workspace "${{ github.workspace }}/video/data/factory-workspaces" \
+            --state-dir "${{ github.workspace }}/video/data/factory-jobs"
 
-      - name: Persist Factory production state
+      - name: Persist Factory production state in video repository
         if: always()
         run: |
           set -e
-          cd factory
+          cd video
           git config user.name "ai-factory[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/workspaces 2>/dev/null || true
+          git add data/factory-workspaces data/factory-jobs 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "No Factory state changes to commit."
             exit 0
@@ -88,4 +90,4 @@ jobs:
             git rebase --abort 2>/dev/null || true
             sleep $((attempt * 5))
           done
-          echo "WARNING: Could not persist Factory state to GitHub."
+          echo "WARNING: Could not persist Factory state to video repository."
