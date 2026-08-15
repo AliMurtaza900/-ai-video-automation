@@ -1,8 +1,4 @@
-"""Run the existing video pipeline as an AI Factory production adapter.
-
-The bridge keeps the existing generator/uploader intact while exposing the
-stable GOAL/WORKSPACE -> JSON contract expected by AI Factory.
-"""
+"""Run the existing video pipeline as an AI Factory production adapter."""
 from __future__ import annotations
 
 import hashlib
@@ -27,22 +23,31 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def load_verified_upload_record(record_path: Path, expected_hash: str) -> dict:
+    """Return a valid upload record only when it belongs to this exact video."""
+    try:
+        data = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("YouTube upload record is missing or invalid JSON") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("YouTube upload record must contain a JSON object")
+    video_id = data.get("youtube_id")
+    if not isinstance(video_id, str) or not video_id.strip():
+        raise RuntimeError("YouTube upload record contains no youtube_id")
+    if data.get("sha256") != expected_hash:
+        raise RuntimeError("YouTube upload record does not match the current final video")
+    return data
+
+
 def run(command: list[str]) -> None:
-    """Run one pipeline step while keeping bridge stdout machine-readable."""
+    """Run a pipeline step and keep bridge stdout machine-readable."""
     env = os.environ.copy()
     log_dir = WORKSPACE / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     name = Path(command[-1]).stem or "command"
     log = log_dir / f"{name}.log"
     with log.open("w", encoding="utf-8") as fh:
-        result = subprocess.run(
-            command,
-            cwd=ROOT,
-            env=env,
-            stdout=fh,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
+        result = subprocess.run(command, cwd=ROOT, env=env, stdout=fh, stderr=subprocess.STDOUT, text=True)
     if result.returncode:
         raise RuntimeError(f"pipeline step failed ({' '.join(command)}); see {log}")
 
@@ -52,14 +57,9 @@ def main() -> int:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     os.environ["VIDEO_GOAL"] = GOAL
 
-    # Clear transient artifacts from the previous attempt. Keep the upload
-    # record because youtube_upload.py uses its SHA-256 for idempotency.
-    for path in (
-        OUTPUT / "final-video.mp4",
-        OUTPUT / "test-video.mp4",
-        OUTPUT / "voice.mp3",
-        OUTPUT / "caption_timing.txt",
-    ):
+    # Never delete youtube_upload.json: the uploader uses its matching SHA-256
+    # record to make retries idempotent. All other transient outputs are rebuilt.
+    for path in (OUTPUT / "final-video.mp4", OUTPUT / "test-video.mp4", OUTPUT / "voice.mp3", OUTPUT / "caption_timing.txt"):
         path.unlink(missing_ok=True)
 
     python = sys.executable
@@ -76,12 +76,7 @@ def main() -> int:
     if not voice.is_file() or voice.stat().st_size == 0:
         raise RuntimeError("voice stage did not create output/voice.mp3")
 
-    run([
-        "ffmpeg", "-y", "-i", str(rendered), "-i", str(voice),
-        "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
-        "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart",
-        str(final),
-    ])
+    run(["ffmpeg", "-y", "-i", str(rendered), "-i", str(voice), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", str(final)])
     if not final.is_file() or final.stat().st_size == 0:
         raise RuntimeError("final video preparation failed")
 
@@ -89,27 +84,13 @@ def main() -> int:
     os.environ.setdefault("YOUTUBE_TITLE", GOAL[:100])
     run([python, "src/youtube_upload.py"])
 
-    # Never trust a stale upload record. It must describe this exact video.
-    if not UPLOAD_RECORD.is_file():
-        raise RuntimeError("YouTube uploader completed without creating output/youtube_upload.json")
-    try:
-        data = json.loads(UPLOAD_RECORD.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError("YouTube upload record is missing or invalid JSON") from exc
-    video_id = data.get("youtube_id")
-    if not video_id:
-        raise RuntimeError("YouTube upload record contains no youtube_id")
-    if data.get("sha256") != expected_hash:
-        raise RuntimeError(
-            "YouTube upload record does not match the current final video; refusing to mark the Factory job completed"
-        )
-
+    data = load_verified_upload_record(UPLOAD_RECORD, expected_hash)
     result = {
         "status": "completed",
         "video": str(final.resolve()),
         "title": data.get("title") or os.environ["YOUTUBE_TITLE"],
         "description": os.environ.get("YOUTUBE_DESCRIPTION", ""),
-        "video_id": video_id,
+        "video_id": data["youtube_id"],
         "sha256": expected_hash,
     }
     (WORKSPACE / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
