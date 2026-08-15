@@ -27,12 +27,13 @@ jobs:
     env:
       PYTHONUNBUFFERED: '1'
       FFMPEG_THREADS: '2'
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
       YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
       YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
       YOUTUBE_PRIVACY: public
       VIDEO_GOAL: ${{ inputs.goal || 'Create an original animated children''s poem with recurring cartoon characters' }}
-      AI_ANIMATION_COMMAND: ${{ secrets.AI_ANIMATION_COMMAND }}
+      AI_ANIMATION_COMMAND: python ${{ github.workspace }}/video/src/gemini_animation_backend.py
 
     steps:
       - name: Checkout video automation
@@ -64,8 +65,8 @@ jobs:
         working-directory: video
         run: python -m unittest tests/test_kids_animation_studio.py tests/test_animation_renderer.py tests/test_factory_bridge.py
 
-      - name: Require real animation backend
-        run: test -n "$AI_ANIMATION_COMMAND"
+      - name: Require Gemini animation credentials
+        run: test -n "$GEMINI_API_KEY"
 
       - name: Run resumable AI Factory production job
         working-directory: factory
