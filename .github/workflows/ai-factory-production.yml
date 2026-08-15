@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       goal:
-        description: "Production goal for the next video"
+        description: "Production goal for the next children's animation"
         required: false
-        default: "Create a high-retention, monetization-safe YouTube Short about a genuinely surprising fact"
+        default: "Create an original animated children's poem with recurring cartoon characters"
   schedule:
     - cron: '0 6 * * *'
     - cron: '0 12 * * *'
@@ -23,16 +23,16 @@ permissions:
 jobs:
   produce:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       PYTHONUNBUFFERED: '1'
       FFMPEG_THREADS: '2'
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
       YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
       YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
       YOUTUBE_PRIVACY: public
-      VIDEO_GOAL: ${{ inputs.goal || 'Create a high-retention, monetization-safe YouTube Short about a genuinely surprising fact' }}
+      VIDEO_GOAL: ${{ inputs.goal || 'Create an original animated children''s poem with recurring cartoon characters' }}
+      AI_ANIMATION_COMMAND: ${{ secrets.AI_ANIMATION_COMMAND }}
 
     steps:
       - name: Checkout video automation
@@ -55,15 +55,23 @@ jobs:
         working-directory: video
         run: python -m pip install -r requirements.txt
 
-      - name: Verify Factory production modules compile
-        working-directory: factory
-        run: python -m compileall -q factory
+      - name: Verify animation and Factory modules compile
+        run: |
+          python -m compileall -q video/src video/tests
+          python -m compileall -q factory/factory
+
+      - name: Run animation safety tests
+        working-directory: video
+        run: python -m unittest tests/test_kids_animation_studio.py tests/test_animation_renderer.py tests/test_factory_bridge.py
+
+      - name: Require real animation backend
+        run: test -n "$AI_ANIMATION_COMMAND"
 
       - name: Run resumable AI Factory production job
         working-directory: factory
         env:
           AI_FACTORY_VIDEO_COMMAND: python ${{ github.workspace }}/video/src/factory_bridge.py
-          AI_FACTORY_VIDEO_TIMEOUT: '3000'
+          AI_FACTORY_VIDEO_TIMEOUT: '4500'
         run: |
           set -euo pipefail
           python -m factory.production "$VIDEO_GOAL" \
