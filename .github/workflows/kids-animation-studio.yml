@@ -15,9 +15,9 @@ on:
         default: "Milo and the Little Flower"
         type: string
       duration:
-        description: "Target duration in minutes"
+        description: "Target duration in minutes (start with 1 for the free test)"
         required: true
-        default: "3"
+        default: "1"
         type: string
       upload_to_youtube:
         description: "Upload to YouTube"
@@ -28,17 +28,11 @@ on:
     paths:
       - "src/**"
       - "tests/**"
+      - "requirements.txt"
       - ".github/workflows/kids-animation-studio.yml"
 
 permissions:
   contents: read
-
-env:
-  CONTENT_TYPE: ${{ inputs.content_type || 'poem' }}
-  TOPIC: ${{ inputs.topic || 'Milo and the Little Flower' }}
-  DURATION: ${{ inputs.duration || '3' }}
-  UPLOAD_TO_YOUTUBE: ${{ inputs.upload_to_youtube || 'false' }}
-  VEO_MODEL: veo-3.1-fast-generate-preview
 
 concurrency:
   group: kids-animation-studio-${{ github.ref }}
@@ -53,8 +47,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install system tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Compile Python
@@ -71,8 +65,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install free local production tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Compile Python
@@ -80,6 +74,10 @@ jobs:
       - name: Run animation tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Validate production inputs
+        env:
+          CONTENT_TYPE: ${{ inputs.content_type }}
+          TOPIC: ${{ inputs.topic }}
+          DURATION: ${{ inputs.duration }}
         run: |
           python - <<'PY'
           import os
@@ -89,14 +87,20 @@ jobs:
           assert 1 <= minutes <= 10
           print('Production inputs validated')
           PY
-      - name: Generate real animated episode
+      - name: Verify zero-cost production mode
+        run: |
+          ! grep -R "google-genai\|GEMINI_API_KEY\|VEO_MODEL\|generate_videos" -n src/kids_animation_production.py requirements.txt
+      - name: Generate real zero-cost animated episode
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CONTENT_TYPE: ${{ inputs.content_type }}
+          TOPIC: ${{ inputs.topic }}
+          DURATION: ${{ inputs.duration }}
         run: python src/kids_animation_production.py
       - name: Validate generated MP4
         run: |
           test -s output/kids_animation/kids-animation.mp4
           ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 output/kids_animation/kids-animation.mp4
+          test -s output/kids_animation/production.json
       - name: Upload animation artifact
         uses: actions/upload-artifact@v4
         with:
@@ -104,13 +108,15 @@ jobs:
           path: output/kids_animation/
           if-no-files-found: error
           retention-days: 7
+      - name: Prepare YouTube upload
+        if: inputs.upload_to_youtube == true
+        run: cp output/kids_animation/kids-animation.mp4 output/final-video.mp4
       - name: Upload to YouTube only when explicitly enabled
         if: inputs.upload_to_youtube == true
         env:
           YOUTUBE_TITLE: ${{ inputs.topic }}
           VIDEO_GOAL: ${{ inputs.topic }}
         run: |
-          cp output/kids_animation/kids-animation.mp4 output/final-video.mp4
           python src/youtube_upload.py
           test -s output/youtube_upload.json
       - name: Publish upload record as artifact
