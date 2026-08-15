@@ -73,11 +73,10 @@ def run(cmd: list[str]) -> None:
 
 
 def font(size: int) -> ImageFont.FreeTypeFont:
-    candidates = [
+    for candidate in (
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
-    ]
-    for candidate in candidates:
+    ):
         if Path(candidate).exists():
             return ImageFont.truetype(candidate, size)
     return ImageFont.load_default()
@@ -86,8 +85,6 @@ def font(size: int) -> ImageFont.FreeTypeFont:
 def make_background(kind: str, path: Path) -> None:
     img = Image.new("RGB", (WIDTH, HEIGHT), (180, 220, 250))
     d = ImageDraw.Draw(img)
-    sky = (180, 220, 250)
-    ground = (120, 190, 105)
     if kind == "bedroom":
         img.paste((235, 220, 190), [0, 0, WIDTH, HEIGHT])
         d.rectangle([0, 480, WIDTH, HEIGHT], fill=(215, 190, 150))
@@ -95,15 +92,14 @@ def make_background(kind: str, path: Path) -> None:
         d.ellipse([780, 90, 980, 290], fill=(255, 215, 90))
         d.rectangle([760, 270, 1000, 480], fill=(245, 235, 220))
     else:
-        img.paste(sky, [0, 0, WIDTH, HEIGHT])
         d.ellipse([980, 65, 1100, 185], fill=(255, 220, 90))
         d.polygon([(0, 430), (260, 300), (500, 430), (760, 285), (1280, 430), (1280, 720), (0, 720)], fill=(145, 195, 115))
-        d.rectangle([0, 510, WIDTH, HEIGHT], fill=ground)
+        d.rectangle([0, 510, WIDTH, HEIGHT], fill=(120, 190, 105))
         if kind in {"garden", "flower", "water", "friends", "dance"}:
             for x in range(100, 1200, 130):
                 y = 500 + (x % 90)
                 d.line([x, y, x, y + 55], fill=(45, 125, 55), width=6)
-                d.ellipse([x - 15, y - 15, x + 15, y + 15], fill=(250, 110 + x % 80, 170))
+                d.ellipse([x - 15, y - 15, x + 15, y + 15], fill=(245, 120, 170))
         if kind == "stream":
             d.polygon([(520, 720), (660, 390), (760, 390), (900, 720)], fill=(80, 175, 225))
             for x in range(590, 850, 70):
@@ -121,22 +117,16 @@ def make_background(kind: str, path: Path) -> None:
 def make_character(path: Path) -> None:
     img = Image.new("RGBA", (420, 420), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    # floppy ears
     d.ellipse([35, 80, 145, 245], fill=(145, 92, 48), outline=(95, 60, 35), width=6)
     d.ellipse([275, 80, 385, 245], fill=(145, 92, 48), outline=(95, 60, 35), width=6)
-    # body and head
     d.ellipse([100, 230, 320, 405], fill=(185, 125, 65), outline=(105, 70, 40), width=7)
     d.ellipse([75, 55, 345, 310], fill=(205, 145, 78), outline=(105, 70, 40), width=7)
-    # muzzle
     d.ellipse([145, 175, 275, 265], fill=(238, 190, 125))
     d.ellipse([196, 178, 225, 205], fill=(45, 35, 30))
-    # eyes
     for x in (145, 250):
         d.ellipse([x, 125, x + 45, 170], fill=(65, 40, 25))
         d.ellipse([x + 10, 133, x + 22, 145], fill=(255, 255, 255))
-    # smile
     d.arc([175, 195, 250, 245], 0, 180, fill=(75, 45, 35), width=6)
-    # blue scarf
     d.polygon([(100, 265), (320, 265), (300, 315), (120, 315)], fill=(55, 120, 210))
     d.polygon([(260, 305), (325, 305), (300, 390), (255, 350)], fill=(45, 100, 190))
     img.save(path)
@@ -148,8 +138,9 @@ def make_flower(path: Path) -> None:
     d.line([110, 110, 110, 245], fill=(50, 135, 65), width=12)
     d.ellipse([55, 95, 165, 205], fill=(255, 195, 75), outline=(210, 145, 45), width=4)
     for a in range(0, 360, 72):
-        r = math.radians(a)
-        cx, cy = 110 + int(math.cos(r) * 65), 120 + int(math.sin(r) * 65)
+        import math as _math
+        r = _math.radians(a)
+        cx, cy = 110 + int(_math.cos(r) * 65), 120 + int(_math.sin(r) * 65)
         d.ellipse([cx - 30, cy - 30, cx + 30, cy + 30], fill=(245, 105, 170))
     img.save(path)
 
@@ -174,65 +165,55 @@ def make_voice(text: str, out: Path) -> None:
     run(["espeak-ng", "-s", "145", "-p", "55", "-a", "170", "-w", str(out), text])
 
 
-def make_scene(index: int, kind: str, action: str, line: str, total: int) -> Path:
+def make_scene(index: int, kind: str, line: str) -> Path:
     bg, char, flower = make_scene_assets(kind)
     scene_dir = SCENES / f"scene_{index:03d}"
     scene_dir.mkdir(parents=True, exist_ok=True)
     voice = scene_dir / "voice.wav"
     make_voice(line, voice)
-    out = scene_dir / "scene.mp4"
+    silent = scene_dir / "silent.mp4"
+    voiced = scene_dir / "scene.mp4"
 
-    # Smooth continuous motion: Milo travels across the scene while the camera gently pans.
     direction = 1 if index % 2 else -1
-    start_x = -80 if direction == 1 else 940
-    end_x = 930 if direction == 1 else -80
-    flower_filter = ""
+    start_x, end_x = ((-80, 930) if direction == 1 else (930, -80))
+    inputs = ["-loop", "1", "-i", str(bg), "-loop", "1", "-i", str(char)]
     if kind in {"flower", "water", "magic", "friends", "dance", "sunset"}:
-        flower_filter = ",overlay=enable='between(t,1.5,6)':x='900+15*sin(t*2)':y='390+8*sin(t*3)'"
+        inputs += ["-loop", "1", "-i", str(flower)]
+        flower_input = 2
+    else:
+        flower_input = None
+    audio_input = flower_input + 1 if flower_input is not None else 2
+    inputs += ["-f", "lavfi", "-i", f"anullsrc=r=48000:cl=stereo:d={SCENE_SECONDS}"]
 
-    filter_complex = (
-        f"[0:v]zoompan=z='min(zoom+0.0008,1.06)':d={FPS*SCENE_SECONDS}:s={WIDTH}x{HEIGHT}:fps={FPS}[bg];"
-        f"[1:v]format=rgba,scale=360:-1[milo];"
-        f"[bg][milo]overlay=x='if(gt(t,0),{start_x}+({end_x}-{start_x})*(t/{SCENE_SECONDS}),{start_x})':"
-        f"y='390+12*sin(t*3)':eval=frame[m];"
-        f"[m][2:v]format=rgba,scale=180:-1{flower_filter}[v]"
-    )
-    # The final filter label is simpler without optional flower overlay complexity.
-    if flower_filter:
-        filter_complex = (
+    if flower_input is not None:
+        filters = (
             f"[0:v]zoompan=z='min(zoom+0.0008,1.06)':d={FPS*SCENE_SECONDS}:s={WIDTH}x{HEIGHT}:fps={FPS}[bg];"
             f"[1:v]format=rgba,scale=360:-1[milo];"
             f"[2:v]format=rgba,scale=180:-1[fl];"
             f"[bg][milo]overlay=x='{start_x}+({end_x}-{start_x})*(t/{SCENE_SECONDS})':y='390+12*sin(t*3)':eval=frame[m];"
-            f"[m][fl]overlay=x='900+15*sin(t*2)':y='390+8*sin(t*3)':enable='between(t,1.5,6)'[v]"
+            f"[m][fl]overlay=x='900+15*sin(t*2)':y='390+8*sin(t*3)':enable='between(t,1.5,{SCENE_SECONDS})'[v]"
         )
-        inputs = ["-loop", "1", "-i", str(bg), "-loop", "1", "-i", str(char), "-loop", "1", "-i", str(flower)]
     else:
-        filter_complex = (
+        filters = (
             f"[0:v]zoompan=z='min(zoom+0.0008,1.06)':d={FPS*SCENE_SECONDS}:s={WIDTH}x{HEIGHT}:fps={FPS}[bg];"
             f"[1:v]format=rgba,scale=360:-1[milo];"
             f"[bg][milo]overlay=x='{start_x}+({end_x}-{start_x})*(t/{SCENE_SECONDS})':y='390+12*sin(t*3)':eval=frame[v]"
         )
-        inputs = ["-loop", "1", "-i", str(bg), "-loop", "1", "-i", str(char)]
 
     run(inputs + [
-        "-filter_complex", filter_complex,
-        "-map", "[v]", "-map", "0:a?", "-t", str(SCENE_SECONDS),
-        "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
-        "-filter_complex", filter_complex,
-        "-shortest", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(out)
+        "-filter_complex", filters,
+        "-map", "[v]", "-map", f"{audio_input}:a",
+        "-t", str(SCENE_SECONDS), "-c:v", "libx264", "-preset", "veryfast",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", "-y", str(silent)
     ])
-    # Replace silent audio with local narration and a simple synthesized music bed.
-    voiced = scene_dir / "voiced.mp4"
+
     run([
-        "-y", "-i", str(out), "-i", str(voice), "-f", "lavfi", "-t", str(SCENE_SECONDS),
-        "-i", "sine=frequency=392:sample_rate=48000:duration=6",
-        "-filter_complex", "[2:a]volume=0.025[m];[1:a]apad=pad_dur=6,volume=1[n];[n][m]amix=inputs=2:duration=first[a]",
+        "-i", str(silent), "-i", str(voice), "-f", "lavfi", "-t", str(SCENE_SECONDS),
+        "-i", f"sine=frequency={330 + (index % 4) * 55}:sample_rate=48000:duration={SCENE_SECONDS}",
+        "-filter_complex", "[2:a]volume=0.018[m];[1:a]apad=pad_dur=6,volume=1[n];[n][m]amix=inputs=2:duration=first[a]",
         "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-shortest", "-y", str(voiced)
     ])
-    voiced.replace(out)
-    return out
+    return voiced
 
 
 def main() -> int:
@@ -248,11 +229,7 @@ def main() -> int:
     SCENES.mkdir(parents=True, exist_ok=True)
     count = max(1, math.ceil(duration * 60 / SCENE_SECONDS))
     lines = POEM_LINES if content_type == "poem" else STORY_LINES
-    clips: list[Path] = []
-    for i in range(count):
-        kind, action = SCENES_DATA[i % len(SCENES_DATA)]
-        line = lines[i % len(lines)]
-        clips.append(make_scene(i + 1, kind, action, line, count))
+    clips = [make_scene(i + 1, *SCENES_DATA[i % len(SCENES_DATA)][:1], lines[i % len(lines)]) for i in range(count)]
 
     concat = OUTPUT / "concat.txt"
     concat.write_text("\n".join(f"file '{p.resolve()}'" for p in clips) + "\n", encoding="utf-8")
@@ -274,6 +251,7 @@ def main() -> int:
         "character": CHARACTER,
         "renderer": "open-source procedural 2D cartoon animation + local espeak-ng TTS + FFmpeg",
         "paid_cloud_ai": False,
+        "note": "The production engine is intentionally cloud-AI-free; the Factory can supply/upgrade scripts and assets separately when free resources are available.",
     }
     (OUTPUT / "production.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     print(f"Generated zero-cost animated episode: {final}")
