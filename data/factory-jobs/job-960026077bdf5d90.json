@@ -1,0 +1,19 @@
+{
+  "created_at": "2026-08-15T18:40:13.964166+00:00",
+  "goal": "Create a high-retention, monetization-safe YouTube Short about a genuinely surprising fact",
+  "job_id": "job-960026077bdf5d90",
+  "metadata": {},
+  "stages": {
+    "produce_video": {
+      "attempts": 3,
+      "error": "video command failed with exit code 1: Traceback (most recent call last):\n  File \"/home/runner/work/-ai-video-automation/-ai-video-automation/video/src/factory_bridge.py\", line 102, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"/home/runner/work/-ai-video-automation/-ai-video-automation/video/src/factory_bridge.py\", line 66, in main\n    run([python, \"src/main.py\"])\n  File \"/home/runner/work/-ai-video-automation/-ai-video-automation/video/src/factory_bridge.py\", line 52, in run\n    raise RuntimeError(f\"pipeline step failed ({' '.join(command)}); see {log}\")\nRuntimeError: pipeline step failed (/usr/bin/python src/main.py); see /home/runner/work/-ai-video-automation/-ai-video-automation/video/data/factory-workspaces/job-960026077bdf5d90/logs/main.log\n",
+      "finished_at": null,
+      "name": "produce_video",
+      "output": {},
+      "started_at": "2026-08-15T18:40:13.964470+00:00",
+      "status": "failed"
+    }
+  },
+  "status": "failed",
+  "updated_at": "2026-08-15T18:40:17.604189+00:00"
+}
