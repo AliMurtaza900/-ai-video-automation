@@ -8,9 +8,7 @@ on:
         required: true
         default: "poem"
         type: choice
-        options:
-          - poem
-          - story
+        options: [poem, story]
       topic:
         description: "Story or poem topic"
         required: true
@@ -52,8 +50,7 @@ jobs:
       - name: Compile Python
         run: python -m compileall -q src tests
       - name: Run animation tests
-        run: |
-          python -m unittest discover -s tests -p 'test_*.py' -v
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Validate requested production configuration
         env:
           CONTENT_TYPE: ${{ inputs.content_type || 'poem' }}
@@ -69,12 +66,8 @@ jobs:
           assert 1 <= minutes <= 10
           assert os.environ['UPLOAD'].lower() in {'true', 'false'}
           print('Production configuration validated')
-          print('content_type=', os.environ['CONTENT_TYPE'])
-          print('topic=', os.environ['TOPIC'])
-          print('duration_minutes=', minutes)
-          print('upload_to_youtube=', os.environ['UPLOAD'])
           PY
-      - name: Production safety gate
+      - name: Safety gate
         run: |
-          echo "First manual test should use upload_to_youtube=false."
-          echo "The workflow validates the animation pipeline before publication."
+          echo "Manual production trigger is configured."
+          echo "Use upload_to_youtube=false for the first visual-quality test."
