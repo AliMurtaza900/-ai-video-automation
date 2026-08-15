@@ -6,13 +6,13 @@ on:
       content_type:
         description: "Content type"
         required: true
-        default: "poem"
+        default: "story"
         type: choice
         options: [poem, story]
       topic:
         description: "Story or poem topic"
         required: true
-        default: "Milo and the Little Flower"
+        default: "Milo and the Little Star"
         type: string
       duration:
         description: "Target duration in minutes"
@@ -75,8 +75,8 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Validate production inputs
         env:
-          CONTENT_TYPE: ${{ inputs.content_type || 'poem' }}
-          TOPIC: ${{ inputs.topic || 'Milo and the Little Flower' }}
+          CONTENT_TYPE: ${{ inputs.content_type || 'story' }}
+          TOPIC: ${{ inputs.topic || 'Milo and the Little Star' }}
           DURATION: ${{ inputs.duration || '1' }}
         run: |
           python - <<'PY'
@@ -89,22 +89,21 @@ jobs:
           PY
       - name: Verify zero-cost production mode
         run: |
-          ! grep -R "google-genai\|GEMINI_API_KEY\|VEO_MODEL\|generate_videos" -n src/kids_animation_production.py requirements.txt
-      - name: Generate real zero-cost animated episode
+          ! grep -R "google-genai\|GEMINI_API_KEY\|VEO_MODEL\|generate_videos" -n src/golden_cartoon_renderer.py requirements.txt
+      - name: Generate golden animated episode
         env:
-          CONTENT_TYPE: ${{ inputs.content_type || 'poem' }}
-          TOPIC: ${{ inputs.topic || 'Milo and the Little Flower' }}
+          CONTENT_TYPE: ${{ inputs.content_type || 'story' }}
+          TOPIC: ${{ inputs.topic || 'Milo and the Little Star' }}
           DURATION: ${{ inputs.duration || '1' }}
-        run: python src/kids_animation_production.py
+        run: python src/golden_cartoon_renderer.py
       - name: Validate generated MP4
         run: |
           test -s output/kids_animation/kids-animation.mp4
           ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 output/kids_animation/kids-animation.mp4
-          test -s output/kids_animation/production.json
       - name: Upload animation artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kids-animation-${{ github.run_number }}
+          name: golden-kids-animation-${{ github.run_number }}
           path: output/kids_animation/
           if-no-files-found: error
           retention-days: 7
@@ -115,7 +114,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.upload_to_youtube == true
         env:
           YOUTUBE_TITLE: ${{ inputs.topic }}
-          YOUTUBE_DESCRIPTION: "A gentle animated children's poem or story created with our zero-cost local animation studio."
+          YOUTUBE_DESCRIPTION: "A gentle animated children's story created with our zero-cost local cartoon studio."
           VIDEO_GOAL: ${{ inputs.topic }}
         run: |
           python src/youtube_upload.py
