@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -38,7 +37,10 @@ def main() -> int:
     # Let the existing script generator use the Factory's job goal.
     os.environ["VIDEO_GOAL"] = GOAL
 
-    for path in (OUTPUT / "youtube_upload.json", OUTPUT / "final-video.mp4", OUTPUT / "test-video.mp4"):
+    # Remove only transient render artifacts. Keep youtube_upload.json so the
+    # existing uploader can prove a duplicate upload is already complete after
+    # an interrupted/retried Factory job.
+    for path in (OUTPUT / "final-video.mp4", OUTPUT / "test-video.mp4"):
         path.unlink(missing_ok=True)
 
     run(["python", "src/main.py"])
@@ -76,8 +78,6 @@ def main() -> int:
     if not video_id:
         raise RuntimeError("YouTube upload record contains no youtube_id")
 
-    # Preserve the result inside the Factory workspace without moving the
-    # source artifact out of the existing video repository.
     result = {
         "status": "completed",
         "video": str(final.resolve()),
