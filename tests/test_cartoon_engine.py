@@ -14,8 +14,21 @@ class CartoonEngineTests(unittest.TestCase):
         kinds = [kind for kind, _ in engine.EPISODE]
         self.assertEqual(len(kinds), len(set(kinds)))
         text = " ".join(line for _, line in engine.EPISODE).lower()
-        for required in ("milo", "lumi", "flower", "stream", "sunset"):
-            self.assertIn(required, text)
+        # Validate the story semantically: the ending must contain a sunset/evening beat,
+        # even when the prose uses a natural equivalent such as "sun sets".
+        required_groups = {
+            "milo": ("milo",),
+            "lumi": ("lumi",),
+            "flower": ("flower",),
+            "stream": ("stream",),
+            "sunset": ("sunset", "sun sets", "sunset/evening", "evening"),
+        }
+        for name, alternatives in required_groups.items():
+            self.assertTrue(any(term in text for term in alternatives), f"missing story beat: {name}")
+
+        self.assertEqual(kinds[-2:], ["sunset", "night"])
+        self.assertIn("sun sets", engine.EPISODE[-2][1].lower())
+        self.assertIn("goodnight", engine.EPISODE[-1][1].lower())
 
     def test_poem_and_story_match_scene_count(self):
         self.assertEqual(len(engine.POEM), len(engine.EPISODE))
