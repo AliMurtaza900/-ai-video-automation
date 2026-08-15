@@ -33,12 +33,20 @@ on:
 permissions:
   contents: read
 
+env:
+  CONTENT_TYPE: ${{ inputs.content_type || 'poem' }}
+  TOPIC: ${{ inputs.topic || 'Milo and the Little Flower' }}
+  DURATION: ${{ inputs.duration || '3' }}
+  UPLOAD_TO_YOUTUBE: ${{ inputs.upload_to_youtube || 'false' }}
+  VEO_MODEL: veo-3.1-fast-generate-preview
+
 concurrency:
   group: kids-animation-studio-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  validate-and-plan:
+  validate:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,16 +55,31 @@ jobs:
           python-version: "3.11"
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Compile Python
+        run: python -m compileall -q src tests
+      - name: Run tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+
+  produce:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install dependencies
+        run: pip install -r requirements.txt
       - name: Compile Python
         run: python -m compileall -q src tests
       - name: Run animation tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
-      - name: Validate requested production configuration
-        env:
-          CONTENT_TYPE: ${{ inputs.content_type || 'poem' }}
-          TOPIC: ${{ inputs.topic || 'Milo and the Little Flower' }}
-          DURATION: ${{ inputs.duration || '3' }}
-          UPLOAD: ${{ inputs.upload_to_youtube || 'false' }}
+      - name: Validate production inputs
         run: |
           python - <<'PY'
           import os
@@ -64,10 +87,37 @@ jobs:
           assert os.environ['TOPIC'].strip()
           minutes = float(os.environ['DURATION'])
           assert 1 <= minutes <= 10
-          assert os.environ['UPLOAD'].lower() in {'true', 'false'}
-          print('Production configuration validated')
+          print('Production inputs validated')
           PY
-      - name: Safety gate
+      - name: Generate real animated episode
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python src/kids_animation_production.py
+      - name: Validate generated MP4
         run: |
-          echo "Manual production trigger is configured."
-          echo "Use upload_to_youtube=false for the first visual-quality test."
+          test -s output/kids_animation/kids-animation.mp4
+          ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 output/kids_animation/kids-animation.mp4
+      - name: Upload animation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kids-animation-${{ github.run_number }}
+          path: output/kids_animation/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload to YouTube only when explicitly enabled
+        if: inputs.upload_to_youtube == true
+        env:
+          YOUTUBE_TITLE: ${{ inputs.topic }}
+          VIDEO_GOAL: ${{ inputs.topic }}
+        run: |
+          cp output/kids_animation/kids-animation.mp4 output/final-video.mp4
+          python src/youtube_upload.py
+          test -s output/youtube_upload.json
+      - name: Publish upload record as artifact
+        if: inputs.upload_to_youtube == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-upload-record-${{ github.run_number }}
+          path: output/youtube_upload.json
+          if-no-files-found: error
+          retention-days: 7
