@@ -1,0 +1,91 @@
+name: AI Factory Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      goal:
+        description: "Production goal for the next video"
+        required: false
+        default: "Create a high-retention, monetization-safe YouTube Short about a genuinely surprising fact"
+  schedule:
+    - cron: '0 6 * * *'
+    - cron: '0 12 * * *'
+    - cron: '0 18 * * *'
+    - cron: '0 22 * * *'
+
+concurrency:
+  group: ai-factory-production
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PYTHONUNBUFFERED: '1'
+      FFMPEG_THREADS: '2'
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+      YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+      YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+      YOUTUBE_PRIVACY: public
+      VIDEO_GOAL: ${{ inputs.goal || 'Create a high-retention, monetization-safe YouTube Short about a genuinely surprising fact' }}
+
+    steps:
+      - name: Checkout video automation
+        uses: actions/checkout@v4
+        with:
+          path: video
+
+      - name: Checkout AI Factory
+        uses: actions/checkout@v4
+        with:
+          repository: AliMurtaza900/-ai-factory
+          path: factory
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install video dependencies
+        working-directory: video
+        run: python -m pip install -r requirements.txt
+
+      - name: Verify Factory production modules compile
+        working-directory: factory
+        run: python -m compileall -q factory
+
+      - name: Run resumable AI Factory production job
+        working-directory: factory
+        env:
+          AI_FACTORY_VIDEO_COMMAND: python ${{ github.workspace }}/video/src/factory_bridge.py
+          AI_FACTORY_VIDEO_TIMEOUT: '3000'
+        run: |
+          set -euo pipefail
+          python -m factory.production "$VIDEO_GOAL" --workspace "${{ github.workspace }}/factory/data/workspaces"
+
+      - name: Persist Factory production state
+        if: always()
+        run: |
+          set -e
+          cd factory
+          git config user.name "ai-factory[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/workspaces 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No Factory state changes to commit."
+            exit 0
+          fi
+          git commit -m "Persist AI Factory production state"
+          for attempt in 1 2 3; do
+            if git fetch origin main && git rebase origin/main && git push origin HEAD:main; then
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((attempt * 5))
+          done
+          echo "WARNING: Could not persist Factory state to GitHub."
