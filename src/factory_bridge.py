@@ -1,4 +1,4 @@
-"""Run the existing video pipeline as an AI Factory production adapter."""
+"""Run the Kids Animation Studio pipeline as an AI Factory production adapter."""
 from __future__ import annotations
 
 import hashlib
@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
 WORKSPACE = Path(os.environ.get("WORKSPACE", str(ROOT / "factory_workspace")))
-GOAL = os.environ.get("GOAL") or os.environ.get("VIDEO_GOAL") or "Create the best current AI automation YouTube Short"
+GOAL = os.environ.get("GOAL") or os.environ.get("VIDEO_GOAL") or "Create an original animated children's poem"
 UPLOAD_RECORD = OUTPUT / "youtube_upload.json"
 
 
@@ -24,7 +24,6 @@ def sha256_file(path: Path) -> str:
 
 
 def load_verified_upload_record(record_path: Path, expected_hash: str) -> dict:
-    """Return a valid upload record only when it belongs to this exact video."""
     try:
         data = json.loads(record_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -40,11 +39,10 @@ def load_verified_upload_record(record_path: Path, expected_hash: str) -> dict:
 
 
 def run(command: list[str]) -> None:
-    """Run a pipeline step and keep bridge stdout machine-readable."""
     env = os.environ.copy()
     log_dir = WORKSPACE / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    name = Path(command[-1]).stem or "command"
+    name = Path(command[1]).stem if len(command) > 1 else "command"
     log = log_dir / f"{name}.log"
     with log.open("w", encoding="utf-8") as fh:
         result = subprocess.run(command, cwd=ROOT, env=env, stdout=fh, stderr=subprocess.STDOUT, text=True)
@@ -57,28 +55,34 @@ def main() -> int:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     os.environ["VIDEO_GOAL"] = GOAL
 
-    # Never delete youtube_upload.json: the uploader uses its matching SHA-256
-    # record to make retries idempotent. All other transient outputs are rebuilt.
+    # The new animation renderer must be explicitly configured. There is no
+    # silent image/slideshow fallback for production children's content.
+    if not os.environ.get("AI_ANIMATION_COMMAND", "").strip():
+        raise RuntimeError("AI_ANIMATION_COMMAND is required for animated children's production")
+
     for path in (OUTPUT / "final-video.mp4", OUTPUT / "test-video.mp4", OUTPUT / "voice.mp3", OUTPUT / "caption_timing.txt"):
         path.unlink(missing_ok=True)
 
     python = sys.executable
-    run([python, "src/main.py"])
-    run([python, "src/fetch_visuals_v2.py"])
-    run([python, "src/add_voice.py"])
-    run([python, "src/render_video.py"])
+    run([python, "src/kids_animation_studio.py", "--output", str(OUTPUT / "production-bible.json")])
+    run([python, "src/animation_renderer.py", "--bible", str(OUTPUT / "production-bible.json"), "--output", str(OUTPUT / "animated-cartoon.mp4")])
 
-    rendered = OUTPUT / "test-video.mp4"
+    animated = OUTPUT / "animated-cartoon.mp4"
+    if not animated.is_file() or animated.stat().st_size == 0:
+        raise RuntimeError("animation renderer did not create animated-cartoon.mp4")
+
+    # Existing audio/caption generation remains the publishing layer, but the
+    # final video now comes from validated animated scene clips.
+    run([python, "src/main.py"])
+    run([python, "src/add_voice.py"])
     voice = OUTPUT / "voice.mp3"
-    final = OUTPUT / "final-video.mp4"
-    if not rendered.is_file() or rendered.stat().st_size == 0:
-        raise RuntimeError("render stage did not create output/test-video.mp4")
     if not voice.is_file() or voice.stat().st_size == 0:
         raise RuntimeError("voice stage did not create output/voice.mp3")
 
-    run(["ffmpeg", "-y", "-i", str(rendered), "-i", str(voice), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", str(final)])
+    final = OUTPUT / "final-video.mp4"
+    run(["ffmpeg", "-y", "-i", str(animated), "-i", str(voice), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", str(final)])
     if not final.is_file() or final.stat().st_size == 0:
-        raise RuntimeError("final video preparation failed")
+        raise RuntimeError("final animated video preparation failed")
 
     expected_hash = sha256_file(final)
     os.environ.setdefault("YOUTUBE_TITLE", GOAL[:100])
@@ -92,6 +96,7 @@ def main() -> int:
         "description": os.environ.get("YOUTUBE_DESCRIPTION", ""),
         "video_id": data["youtube_id"],
         "sha256": expected_hash,
+        "content_type": "animated_kids",
     }
     (WORKSPACE / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result))

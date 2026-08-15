@@ -1,0 +1,42 @@
+name: Kids Animation Renderer
+
+on:
+  push:
+    branches: [feature/animated-kids-studio]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate-renderer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Compile Python
+        run: python -m compileall -q src tests
+      - name: Run renderer tests
+        run: python -m unittest tests/test_kids_animation_studio.py tests/test_animation_renderer.py
+      - name: Validate renderer refuses missing animation backend
+        run: |
+          python - <<'PY'
+          import os, tempfile
+          from pathlib import Path
+          from src.kids_animation_studio import write_bible
+          from src.animation_renderer import render_bible
+          with tempfile.TemporaryDirectory() as tmp:
+              bible = Path(tmp) / 'bible.json'
+              write_bible(bible)
+              os.environ.pop('AI_ANIMATION_COMMAND', None)
+              try:
+                  render_bible(bible, Path(tmp) / 'scenes')
+              except RuntimeError as exc:
+                  assert 'AI_ANIMATION_COMMAND' in str(exc)
+              else:
+                  raise SystemExit('Renderer incorrectly accepted missing animation backend')
+          print('ANIMATION RENDERER SAFETY GATE PASSED')
+          PY
