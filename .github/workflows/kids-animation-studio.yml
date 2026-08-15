@@ -1,0 +1,80 @@
+name: Kids Animation Studio
+
+on:
+  workflow_dispatch:
+    inputs:
+      content_type:
+        description: "Content type"
+        required: true
+        default: "poem"
+        type: choice
+        options:
+          - poem
+          - story
+      topic:
+        description: "Story or poem topic"
+        required: true
+        default: "Milo and the Little Flower"
+        type: string
+      duration:
+        description: "Target duration in minutes"
+        required: true
+        default: "3"
+        type: string
+      upload_to_youtube:
+        description: "Upload to YouTube"
+        required: true
+        default: false
+        type: boolean
+  push:
+    paths:
+      - "src/**"
+      - "tests/**"
+      - ".github/workflows/kids-animation-studio.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kids-animation-studio-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Compile Python
+        run: python -m compileall -q src tests
+      - name: Run animation tests
+        run: |
+          python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Validate requested production configuration
+        env:
+          CONTENT_TYPE: ${{ inputs.content_type || 'poem' }}
+          TOPIC: ${{ inputs.topic || 'Milo and the Little Flower' }}
+          DURATION: ${{ inputs.duration || '3' }}
+          UPLOAD: ${{ inputs.upload_to_youtube || 'false' }}
+        run: |
+          python - <<'PY'
+          import os
+          assert os.environ['CONTENT_TYPE'] in {'poem', 'story'}
+          assert os.environ['TOPIC'].strip()
+          minutes = float(os.environ['DURATION'])
+          assert 1 <= minutes <= 10
+          assert os.environ['UPLOAD'].lower() in {'true', 'false'}
+          print('Production configuration validated')
+          print('content_type=', os.environ['CONTENT_TYPE'])
+          print('topic=', os.environ['TOPIC'])
+          print('duration_minutes=', minutes)
+          print('upload_to_youtube=', os.environ['UPLOAD'])
+          PY
+      - name: Production safety gate
+        run: |
+          echo "First manual test should use upload_to_youtube=false."
+          echo "The workflow validates the animation pipeline before publication."
