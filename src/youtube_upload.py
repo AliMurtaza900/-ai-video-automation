@@ -47,10 +47,7 @@ def set_thumbnail(youtube, video_id, thumbnail):
         except HttpError as exc:
             status = getattr(exc.resp, "status", None)
             if status == 403:
-                # Upload permission and thumbnail permission are separate on YouTube.
-                # A channel without custom-thumbnail permission must not make an otherwise
-                # successful video upload fail.
-                print("WARNING: YouTube rejected the custom thumbnail (403 permission). Video upload will remain successful.")
+                print("WARNING: YouTube rejected the custom thumbnail (403 permission). Video upload remains successful.")
                 return False
             if status not in {429, 500, 502, 503, 504} or attempt == 5:
                 print(f"WARNING: Could not set thumbnail after {attempt} attempts: {exc}")
@@ -70,10 +67,12 @@ def main():
         raise RuntimeError(f"Video not found or empty: {video}")
 
     video_hash = sha256_file(video)
-    title = os.environ.get("YOUTUBE_TITLE", "Amazing AI Fact #shorts")[:100]
-    description = os.environ.get("YOUTUBE_DESCRIPTION", "An automatically generated interesting fact. #shorts #facts #ai")
+    title = os.environ.get("YOUTUBE_TITLE", "Milo and the Little Flower")[:100]
+    description = os.environ.get(
+        "YOUTUBE_DESCRIPTION",
+        "A gentle animated children's poem or story created with our zero-cost local animation studio.",
+    )
     youtube = build("youtube", "v3", credentials=get_credentials())
-
     thumbnail = create_thumbnail(video, title)
 
     if UPLOAD_RECORD.exists():
@@ -86,7 +85,15 @@ def main():
         except (OSError, json.JSONDecodeError):
             pass
 
-    body = {"snippet": {"title": title, "description": description, "categoryId": "27", "tags": ["shorts", "facts", "interesting facts", "AI"]}, "status": {"privacyStatus": os.environ.get("YOUTUBE_PRIVACY", "private")}}
+    body = {
+        "snippet": {
+            "title": title,
+            "description": description,
+            "categoryId": "24",
+            "tags": ["kids", "children", "animated story", "kids poem", "cartoon", "bedtime story"],
+        },
+        "status": {"privacyStatus": os.environ.get("YOUTUBE_PRIVACY", "private"), "selfDeclaredMadeForKids": True},
+    }
     media = MediaFileUpload(str(video), mimetype="video/mp4", resumable=True, chunksize=8 * 1024 * 1024)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
     response = None
@@ -115,9 +122,13 @@ def main():
     if not youtube_id:
         raise RuntimeError("YouTube upload returned no video ID")
 
-    UPLOAD_RECORD.write_text(json.dumps({"sha256": video_hash, "youtube_id": youtube_id, "title": title}, indent=2) + "\n", encoding="utf-8")
+    UPLOAD_RECORD.write_text(
+        json.dumps({"sha256": video_hash, "youtube_id": youtube_id, "title": title}, indent=2) + "\n",
+        encoding="utf-8",
+    )
     set_thumbnail(youtube, youtube_id, thumbnail)
     print("Uploaded YouTube video:", youtube_id)
 
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    main()
