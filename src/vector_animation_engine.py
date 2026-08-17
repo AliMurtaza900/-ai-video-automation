@@ -7,7 +7,7 @@ import cairosvg
 
 ROOT=Path(__file__).resolve().parent.parent
 OUT=ROOT/'output'/'kids_animation'
-FPS=30; W=1280; H=720; SCENE_SECONDS=6
+FPS=24; W=1280; H=720; SCENE_SECONDS=6
 SCENES=[('bedroom','wake'),('garden','meet'),('path','follow'),('stream','cross'),('meadow','discover'),('help','help'),('water','water'),('magic','magic'),('friends','friends'),('dance','dance'),('sunset','rest'),('night','home')]
 POEM=["Wake up, Milo, morning is bright! Stretch your paws in golden light!","Skip through the garden, green and wide. Little Lumi dances by your side!","Follow the path and sing hello. Watch the happy leaves all blow!","Hop on the stones, splash in the stream. Every little adventure is a dream!","In the meadow, what do we see? A sleepy flower waiting patiently.","Kind little Milo kneels down low. A gentle helping hand can make things grow.","Tip the can and water slow. Tiny drops help flowers grow!","Open, open, petals bright. Golden sparkles fill the light!","Friends come hopping, friends come flying. Happy little hearts, no one is hiding!","Clap your paws and dance around. Kindness makes a happy sound!","When the sun sinks soft and low, Milo sees how kindness grows.","Goodnight, friends, the stars shine through. Tomorrow brings adventures new!"]
 STORY=["Milo woke with a sleepy yawn. A tiny glow twinkled outside his window.","He opened the door and met Lumi, a friendly little firefly with a warm golden light.","Lumi flew down the garden path, and Milo followed with three cheerful birds.","At the stream Milo crossed the stones. Splash! He nearly slipped, then laughed.","Across the stream he heard a tiny cry. A little flower was thirsty and its petals were closed.","Milo knelt beside the flower and promised to help. He hurried for his watering can.","Drop by drop, Milo watered the flower. Slowly its leaves lifted toward the sun.","The flower opened with a sparkle. Lumi danced around it like a tiny star.","A rabbit and the birds arrived. Everyone gathered to see the beautiful flower.","They danced together because kindness had brought them all to the same place.","At sunset Milo rested beside the flower and smiled at his new friends.","Milo waved goodnight. Lumi lit the path home, and tomorrow another adventure would begin."]
@@ -27,7 +27,6 @@ def svg_scene(kind,action,t):
             bg+='''<path d="M1010 490 Q1010 390 1010 330" stroke="#39814d" stroke-width="14"/><g fill="#f28fb5"><ellipse cx="1010" cy="315" rx="28" ry="48"/><ellipse cx="1010" cy="315" rx="28" ry="48" transform="rotate(72 1010 315)"/><ellipse cx="1010" cy="315" rx="28" ry="48" transform="rotate(144 1010 315)"/><ellipse cx="1010" cy="315" rx="28" ry="48" transform="rotate(216 1010 315)"/><ellipse cx="1010" cy="315" rx="28" ry="48" transform="rotate(288 1010 315)"/></g><circle cx="1010" cy="315" r="24" fill="#ffd45d"/>'''
         if night:
             for x,y in [(110,90),(220,160),(390,80),(560,130),(760,75),(930,180),(1150,100)]: bg+=f'<circle cx="{x}" cy="{y}" r="5" fill="#fff4b0"/>'
-    # Milo: layered vector character with smooth keyframed pose
     mx=250+520*(3*p*p-2*p*p*p) if kind not in {'bedroom','meadow','help','water','sunset','night'} else 520
     bounce=8*math.sin(t*math.pi*2) if action in {'walk','dance','run'} else 0
     arm=30*math.sin(t*math.pi*2) if action in {'dance','wave','walk'} else 0
@@ -57,11 +56,15 @@ def voice(text,out):
     subprocess.run([piper,'--model',str(model),'--output_file',str(out),'--sentence-silence','0.25'],input=text,text=True,check=True,cwd=ROOT)
 
 def main():
-    content=os.getenv('CONTENT_TYPE','poem'); duration=float(os.getenv('DURATION','1')); lines=POEM if content=='poem' else STORY
+    content=os.getenv('CONTENT_TYPE','poem'); duration=float(os.getenv('DURATION','1'))
+    if content not in {'poem','story'}: raise RuntimeError('CONTENT_TYPE must be poem or story')
+    if not 1 <= duration <= 10: raise RuntimeError('DURATION must be between 1 and 10 minutes')
+    lines=POEM if content=='poem' else STORY
     OUT.mkdir(parents=True,exist_ok=True); scenes=[]
     for i,(kind,action) in enumerate(SCENES):
         sd=OUT/'scenes'/f'{i+1:03d}'; sd.mkdir(parents=True,exist_ok=True); v=sd/'video.mp4'; a=sd/'voice.wav'; render_scene(kind,action,v); voice(lines[i%len(lines)],a); final=sd/'scene.mp4'
-        subprocess.run(['ffmpeg','-y','-i',str(v),'-i',str(a),'-filter_complex','[1:a]highpass=f=80,lowpass=f=12000,acompressor=threshold=-18dB:ratio=3:attack=5:release=80,loudnorm=I=-14:LRA=7:TP=-1.2[a]','-map','0:v','-map','[a]','-c:v','copy','-c:a','aac','-b:a','192k','-ar','48000','-shortest',str(final)],check=True,cwd=ROOT); scenes.append(final)
+        subprocess.run(['ffmpeg','-y','-i',str(v),'-i',str(a),'-filter_complex','[1:a]highpass=f=80,lowpass=f=12000,acompressor=threshold=-18dB:ratio=3:attack=5:release=80,volume=1.8,aresample=48000[a]','-map','0:v','-map','[a]','-c:v','copy','-c:a','aac','-b:a','192k','-ar','48000','-shortest',str(final)],check=True,cwd=ROOT)
+        scenes.append(final)
     concat=OUT/'concat.txt'; concat.write_text('\n'.join(f"file '{p.resolve()}'" for p in scenes)+'\n'); final=OUT/'kids-animation.mp4'
     subprocess.run(['ffmpeg','-y','-f','concat','-safe','0','-i',str(concat),'-c','copy','-movflags','+faststart',str(final)],check=True,cwd=ROOT)
     if final.stat().st_size<500000: raise RuntimeError('rendered video failed quality gate')
