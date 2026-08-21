@@ -12,7 +12,8 @@ HISTORY_FILE = DATA / "topic_history.json"
 OUTPUT.mkdir(exist_ok=True)
 DATA.mkdir(exist_ok=True)
 
-MODELS = ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
+# Prefer the newest capable Flash model first, then fall back to stable 3.5 variants.
+MODELS = ["gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]
 BASE_PROMPT = """
 Create one original short-form video narration about ONE specific, genuinely interesting fact.
 The finished narration will be voiced and edited automatically for a vertical YouTube Short.

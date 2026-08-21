@@ -48,6 +48,7 @@ jobs:
         working-directory: repo
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          VIDEO_GOAL: "Create a high-retention, monetization-safe YouTube Short about a genuinely surprising fact"
         run: |
           for attempt in 1 2 3; do
             python src/main.py && exit 0
@@ -133,4 +134,7 @@ jobs:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_PRIVACY: public
+          YOUTUBE_MADE_FOR_KIDS: "false"
+          YOUTUBE_CATEGORY_ID: "27"
+          YOUTUBE_DESCRIPTION: "A short, surprising fact narrated and edited automatically for YouTube Shorts. Educational content for general audiences."
         run: python src/youtube_upload.py
