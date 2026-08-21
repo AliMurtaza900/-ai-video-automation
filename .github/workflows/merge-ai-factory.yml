@@ -1,0 +1,87 @@
+name: Merge AI Factory Engine
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'AI Factory branch/tag/commit to merge'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout video automation
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch AI Factory
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          git clone --depth 1 --branch "$SOURCE_REF" https://github.com/AliMurtaza900/-ai-factory.git /tmp/ai-factory
+          test -d /tmp/ai-factory/factory
+
+      - name: Merge factory orchestration layer
+        run: |
+          rm -rf src/ai_factory
+          mkdir -p src/ai_factory
+          cp -R /tmp/ai-factory/factory/. src/ai_factory/
+          cat > src/ai_factory/README.md <<'EOF'
+          # AI Factory orchestration layer
+
+          This is the orchestration/intelligence layer imported from the AI Factory repository.
+          The video renderer, Google visual acquisition, audio engine, quality gates and YouTube
+          uploader remain owned by this repository.
+
+          Integration boundary:
+
+          `AI Factory planner/agents -> video production adapter -> renderer -> QC -> uploader`
+          EOF
+
+      - name: Add production adapter
+        run: |
+          cat > src/ai_factory_video_adapter.py <<'PY'
+          from __future__ import annotations
+
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          ROOT = Path(__file__).resolve().parent.parent
+          ENTRY = ROOT / 'src' / 'kids_animation_production.py'
+
+          def run_video_production(env: dict[str, str] | None = None) -> int:
+              merged = os.environ.copy()
+              if env:
+                  merged.update(env)
+              return subprocess.run([sys.executable, str(ENTRY)], cwd=ROOT, env=merged, check=False).returncode
+
+          if __name__ == '__main__':
+              raise SystemExit(run_video_production())
+          PY
+
+      - name: Validate imports and tests
+        run: |
+          python -m compileall -q src
+          python -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Commit merged factory layer
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/ai_factory src/ai_factory_video_adapter.py
+          if git diff --cached --quiet; then
+            echo 'No merge changes required.'
+          else
+            git commit -m 'feat: merge AI Factory orchestration layer'
+            git push origin HEAD:main
+          fi
