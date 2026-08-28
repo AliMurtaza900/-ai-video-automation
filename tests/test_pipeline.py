@@ -13,7 +13,7 @@ class PipelineTests(unittest.TestCase):
             "This is a surprisingly useful fact about our world. "
             "It sounds impossible at first, but the explanation is simple and measurable. "
             "Once you see how the pieces fit together, the strange result makes sense. "
-            "And that is what makes this fact so memorable."
+            "And that is what makes this fact so memorable. It is the kind of detail that sounds unbelievable until the explanation clicks into place, which makes it perfect for a short video."
         )
         main.validate_script(script)
 
