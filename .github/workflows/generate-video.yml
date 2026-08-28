@@ -55,7 +55,7 @@ jobs:
           git config user.name "ai-video-automation[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/topic_history.json
-          if git diff --cached --quiet; then exit 0; fij          git commit -m "Update topic memory [skip ci]"
+          if git diff --cached --quiet; then exit 0; fi          git commit -m "Update topic memory [skip ci]"
           git pull --rebase origin main
           git push origin HEAD:main
 
@@ -86,9 +86,9 @@ jobs:
 
       - name: Upload final video to YouTube
         env:
-          YOUTUBE_REFRESX_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_SECRET }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_PRIVACY: public
           YOUTUBE_MADE_FOR_KIDS: "false"
           YOUTUBE_CATEGORY_ID: "27"
