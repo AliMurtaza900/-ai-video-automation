@@ -13,7 +13,7 @@ DEFAULT_SHOT_SECONDS = 2.8
 MAX_SECONDS = 45
 
 VIDEO_EXTS = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".ogv"}
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".svg"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
 
 def media_duration(path: Path) -> float:
