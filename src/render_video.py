@@ -33,7 +33,9 @@ def load_caption_timings():
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
             start, end, text = line.split("|", 2)
-            result.append((float(start), float(end), text.strip()))
+            start, end = float(start), float(end)
+            if end > start and text.strip():
+                result.append((start, end, text.strip()))
         except ValueError:
             pass
     return result
