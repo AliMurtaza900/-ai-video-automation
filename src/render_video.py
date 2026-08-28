@@ -62,6 +62,10 @@ def make_srt(timings):
 
 
 def visual_files():
+    wan_dir = OUTPUT / "wan_scenes"
+    wan_files = [p for p in sorted(wan_dir.glob("scene_*.mp4")) if p.suffix.lower() in VIDEO_EXTS] if wan_dir.exists() else []
+    if wan_files:
+        return wan_files
     return [p for p in sorted(VISUALS.glob("visual_*")) if p.suffix.lower() in VIDEO_EXTS | IMAGE_EXTS]
 
 
