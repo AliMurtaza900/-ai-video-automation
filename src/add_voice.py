@@ -1,16 +1,17 @@
 import asyncio
 import re
 import subprocess
+import time
 from pathlib import Path
 import edge_tts
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
-VOICE = "en-US-AriaNeural"
+VOICES = ["en-US-AriaNeural", "en-US-JennyNeural", "en-US-GuyNeural"]
 
 
-async def make_voice(text: str, output: Path):
-    communicate = edge_tts.Communicate(text, VOICE)
+async def make_voice(text: str, output: Path, voice: str):
+    communicate = edge_tts.Communicate(text, voice)
     with output.open("wb") as audio:
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
@@ -55,27 +56,37 @@ def make_caption_timings(text: str, duration: float):
 
 def main():
     script_file = OUTPUT / "script.txt"
-    video_file = OUTPUT / "test-video.mp4"
     audio_file = OUTPUT / "voice.mp3"
     timing_file = OUTPUT / "caption_timing.txt"
-    final_file = OUTPUT / "final-video.mp4"
 
     text = script_file.read_text(encoding="utf-8").strip()
     if not text:
         raise RuntimeError("Generated script is empty")
 
-    if audio_file.exists():
-        audio_file.unlink()
-    asyncio.run(make_voice(text, audio_file))
-    duration = duration_seconds(audio_file)
-
-    timings = make_caption_timings(text, duration)
-    timing_file.write_text(
-        "\n".join(f"{s:.3f}|{e:.3f}|{caption}" for s, e, caption in timings),
-        encoding="utf-8",
-    )
-
-    print(f"Created voice ({duration:.2f}s) and {len(timings)} caption segments")
+    last_error = None
+    for voice in VOICES:
+        for attempt in range(1, 4):
+            try:
+                audio_file.unlink(missing_ok=True)
+                asyncio.run(make_voice(text, audio_file))
+                if audio_file.stat().st_size < 10000:
+                    raise RuntimeError("TTS returned a tiny audio file")
+                duration = duration_seconds(audio_file)
+                if not 8 <= duration <= 55:
+                    raise RuntimeError(f"TTS duration is {duration:.2f}s")
+                timings = make_caption_timings(text, duration)
+                timing_file.write_text(
+                    "\n".join(f"{s:.3f}|{e:.3f}|{caption}" for s, e, caption in timings),
+                    encoding="utf-8",
+                )
+                print(f"Created voice with {voice}: {duration:.2f}s, {len(timings)} captions")
+                return
+            except Exception as exc:
+                last_error = exc
+                print(f"TTS {voice} attempt {attempt} failed: {exc}")
+                if attempt < 3:
+                    time.sleep(min(30, 3 * (2 ** (attempt - 1))))
+    raise RuntimeError(f"All Edge TTS attempts failed: {last_error}")
 
 
 if __name__ == "__main__":

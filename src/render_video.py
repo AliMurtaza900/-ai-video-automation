@@ -13,7 +13,7 @@ DEFAULT_SHOT_SECONDS = 2.8
 MAX_SECONDS = 45
 
 VIDEO_EXTS = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".ogv"}
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".svg"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
 
 def media_duration(path: Path) -> float:
@@ -33,7 +33,9 @@ def load_caption_timings():
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
             start, end, text = line.split("|", 2)
-            result.append((float(start), float(end), text.strip()))
+            start, end = float(start), float(end)
+            if end > start and text.strip():
+                result.append((start, end, text.strip()))
         except ValueError:
             pass
     return result
@@ -62,10 +64,6 @@ def make_srt(timings):
 
 
 def visual_files():
-    wan_dir = OUTPUT / "wan_scenes"
-    wan_files = [p for p in sorted(wan_dir.glob("scene_*.mp4")) if p.suffix.lower() in VIDEO_EXTS] if wan_dir.exists() else []
-    if wan_files:
-        return wan_files
     return [p for p in sorted(VISUALS.glob("visual_*")) if p.suffix.lower() in VIDEO_EXTS | IMAGE_EXTS]
 
 

@@ -61,17 +61,37 @@ def set_thumbnail(youtube, video_id, thumbnail):
     return False
 
 
+def derive_title_from_script() -> str:
+    """Best-effort title from the generated narration when none is supplied."""
+    script_path = OUTPUT / "script.txt"
+    if not script_path.exists():
+        return "Surprising Fact You Need to Know"
+    text = script_path.read_text(encoding="utf-8").strip()
+    if not text:
+        return "Surprising Fact You Need to Know"
+    # Take the first sentence and keep it under ~70 chars for Shorts.
+    first = text.split(".")[0].strip()
+    if len(first) > 70:
+        first = first[:67].rsplit(" ", 1)[0] + "..."
+    return first or "Surprising Fact You Need to Know"
+
+
 def main():
     video = OUTPUT / "final-video.mp4"
     if not video.exists() or video.stat().st_size == 0:
         raise RuntimeError(f"Video not found or empty: {video}")
 
     video_hash = sha256_file(video)
-    title = os.environ.get("YOUTUBE_TITLE", "Milo and the Little Flower")[:100]
+    title = os.environ.get("YOUTUBE_TITLE") or derive_title_from_script()
+    title = title[:100]
     description = os.environ.get(
         "YOUTUBE_DESCRIPTION",
-        "A gentle animated children's poem or story created with our zero-cost local animation studio.",
+        "A short, surprising fact narrated and edited automatically for YouTube Shorts. "
+        "Educational / entertainment content suitable for general audiences.",
     )
+    made_for_kids = os.environ.get("YOUTUBE_MADE_FOR_KIDS", "false").lower() in ("1", "true", "yes")
+    category_id = os.environ.get("YOUTUBE_CATEGORY_ID", "27")  # 27 = Education (good default for facts)
+
     youtube = build("youtube", "v3", credentials=get_credentials())
     thumbnail = create_thumbnail(video, title)
 
@@ -89,10 +109,22 @@ def main():
         "snippet": {
             "title": title,
             "description": description,
-            "categoryId": "24",
-            "tags": ["kids", "children", "animated story", "kids poem", "cartoon", "bedtime story"],
+            "categoryId": category_id,
+            "tags": [
+                "facts",
+                "did you know",
+                "surprising facts",
+                "youtube shorts",
+                "education",
+                "interesting facts",
+                "science",
+                "history",
+            ],
         },
-        "status": {"privacyStatus": os.environ.get("YOUTUBE_PRIVACY", "private"), "selfDeclaredMadeForKids": True},
+        "status": {
+            "privacyStatus": os.environ.get("YOUTUBE_PRIVACY", "private"),
+            "selfDeclaredMadeForKids": made_for_kids,
+        },
     }
     media = MediaFileUpload(str(video), mimetype="video/mp4", resumable=True, chunksize=8 * 1024 * 1024)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)

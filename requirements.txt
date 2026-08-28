@@ -3,6 +3,7 @@ requests
 google-api-python-client
 google-auth-oauthlib
 google-auth-httplib2
-google-genai>=1.0.0,<2
-huggingface-hub>=0.30,<1
-edge-tts>=7.0.0,<8
+google-genai
+edge-tts
+cairosvg
+cairosvg
