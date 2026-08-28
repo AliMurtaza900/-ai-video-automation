@@ -91,6 +91,8 @@ jobs:
       - name: Generate AI voice and word timings
         working-directory: repo
         run: |
+          python -m pip install --no-cache-dir --upgrade "edge-tts>=7.0.0,<8"
+          python -c "import edge_tts; print(edge_tts.__file__)"
           for attempt in 1 2 3; do
             python src/add_voice.py && exit 0
             echo "Voice generation attempt $attempt failed; retrying..."
