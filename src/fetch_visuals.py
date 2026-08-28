@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from urllib.parse import quote
 import requests
+from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
@@ -182,10 +183,16 @@ def download(candidate, index):
 
 
 def make_local_fallback(index, scene):
-    # Safety fallback only. It is graphical, not a narration text card.
-    path = VISUALS / f"visual_{index:02d}.svg"
-    svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#020617"/><stop offset=".5" stop-color="#1e3a8a"/><stop offset="1" stop-color="#4c1d95"/></linearGradient><radialGradient id="r"><stop offset="0" stop-color="#38bdf8" stop-opacity=".65"/><stop offset="1" stop-color="#38bdf8" stop-opacity="0"/></radialGradient></defs><rect width="1080" height="1920" fill="url(#g)"/><circle cx="820" cy="350" r="430" fill="url(#r)"/><circle cx="160" cy="1560" r="480" fill="#a78bfa" opacity=".12"/><path d="M0 1480 C260 1260 430 1710 700 1430 S980 1280 1080 1500 L1080 1920 L0 1920Z" fill="#000" opacity=".45"/><circle cx="190" cy="350" r="90" fill="#fff" opacity=".08"/><circle cx="360" cy="350" r="55" fill="#fff" opacity=".07"/><circle cx="490" cy="350" r="35" fill="#fff" opacity=".06"/></svg>'''
-    path.write_text(svg, encoding="utf-8")
+    path = VISUALS / f"visual_{index:02d}.jpg"
+    width, height = 1080, 1920
+    image = Image.new("RGB", (width, height))
+    draw = ImageDraw.Draw(image)
+    for y in range(height):
+        t = y / max(1, height - 1)
+        draw.line((0, y, width, y), fill=(int(8 + 28 * t), int(18 + 18 * (1 - t)), int(45 + 55 * (1 - t))))
+    draw.ellipse((620, 100, 1260, 740), fill=(65, 135, 220))
+    draw.ellipse((-300, 1320, 500, 2100), fill=(110, 65, 180))
+    image.save(path, "JPEG", quality=90)
     return path
 
 
