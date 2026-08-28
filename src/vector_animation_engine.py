@@ -8,7 +8,20 @@ import cairosvg
 ROOT=Path(__file__).resolve().parent.parent
 OUT=ROOT/'output'/'kids_animation'
 FPS=24; W=1280; H=720; SCENE_SECONDS=6
-SCENES=[('bedroom','wake'),('garden','meet'),('path','follow'),('stream','cross'),('meadow','discover'),('help','help'),('water','water'),('magic','magic'),('friends','friends'),('dance','dance'),('sunset','rest'),('night','home')]
+SCENES=[
+    ('bedroom','Milo wakes and prepares for the day.'),
+    ('garden','Milo meets Lumi in the garden.'),
+    ('path','Milo follows Lumi along the path.'),
+    ('stream','Milo crosses the sparkling stream.'),
+    ('meadow','Milo discovers a thirsty flower in the meadow.'),
+    ('help','Milo decides to help the little flower.'),
+    ('water','Milo waters the flower gently.'),
+    ('magic','Lumi and Milo watch the flower bloom with magic.'),
+    ('friends','Milo welcomes his friends around the flower.'),
+    ('dance','Milo and Lumi dance with their friends.'),
+    ('sunset','Milo rests with his friends at sunset.'),
+    ('night','Milo and Lumi head home under the stars.'),
+]
 POEM=["Wake up, Milo, morning is bright! Stretch your paws in golden light!","Skip through the garden, green and wide. Little Lumi dances by your side!","Follow the path and sing hello. Watch the happy leaves all blow!","Hop on the stones, splash in the stream. Every little adventure is a dream!","In the meadow, what do we see? A sleepy flower waiting patiently.","Kind little Milo kneels down low. A gentle helping hand can make things grow.","Tip the can and water slow. Tiny drops help flowers grow!","Open, open, petals bright. Golden sparkles fill the light!","Friends come hopping, friends come flying. Happy little hearts, no one is hiding!","Clap your paws and dance around. Kindness makes a happy sound!","When the sun sinks soft and low, Milo sees how kindness grows.","Goodnight, friends, the stars shine through. Tomorrow brings adventures new!"]
 STORY=["Milo woke with a sleepy yawn. A tiny glow twinkled outside his window.","He opened the door and met Lumi, a friendly little firefly with a warm golden light.","Lumi flew down the garden path, and Milo followed with three cheerful birds.","At the stream Milo crossed the stones. Splash! He nearly slipped, then laughed.","Across the stream he heard a tiny cry. A little flower was thirsty and its petals were closed.","Milo knelt beside the flower and promised to help. He hurried for his watering can.","Drop by drop, Milo watered the flower. Slowly its leaves lifted toward the sun.","The flower opened with a sparkle. Lumi danced around it like a tiny star.","A rabbit and the birds arrived. Everyone gathered to see the beautiful flower.","They danced together because kindness had brought them all to the same place.","At sunset Milo rested beside the flower and smiled at his new friends.","Milo waved goodnight. Lumi lit the path home, and tomorrow another adventure would begin."]
 
