@@ -24,10 +24,10 @@ def clean(value):
     return re.sub(r"\s+", " ", html.unescape(re.sub("<.*?>", " ", str(value or "")))).strip()
 
 
-def request_json(url, params, attempts=4):
+def request_json(url, params, attempts=2):
     for attempt in range(attempts):
         try:
-            response = requests.get(url, params=params, timeout=25, headers=UA)
+            response = requests.get(url, params=params, timeout=12, headers=UA)
             if response.status_code == 429:
                 retry = response.headers.get("Retry-After")
                 delay = int(retry) if retry and retry.isdigit() else min(60, 4 * (2 ** attempt))
@@ -40,7 +40,7 @@ def request_json(url, params, attempts=4):
             if attempt == attempts - 1:
                 print(f"Request failed for {url}: {exc}")
                 return {}
-            delay = min(20, 2 * (2 ** attempt))
+            delay = min(6, 2 * (2 ** attempt))
             print(f"Request error: {exc}; retrying in {delay}s")
             time.sleep(delay)
     return {}
@@ -166,7 +166,7 @@ def score(candidate, terms, scene, prefer_video=False):
 
 
 def download(candidate, index):
-    response = requests.get(candidate["url"], timeout=120, headers=UA, stream=True)
+    response = requests.get(candidate["url"], timeout=(8, 20), headers=UA, stream=True)
     response.raise_for_status()
     suffix = ".mp4" if candidate["mime"] == "video/mp4" else ".webm" if candidate["mime"] == "video/webm" else ".ogg" if candidate["mime"] == "video/ogg" else ".jpg"
     path = VISUALS / f"visual_{index:02d}{suffix}"
@@ -242,7 +242,7 @@ def main():
         if chosen is None:
             path = make_local_fallback(len(selected), scene)
             selected.append(path)
-            sources.append({"scene":scene_index,"scene_text":scene,"local_file":str(path.relative_to(ROOT)),"title":"Graphical local fallback","artist":"AI Video Automation","license":"Generated locally","pageurl":"","url":"","mime":"image/svg+xml","score":0})
+            sources.append({"scene":scene_index,"scene_text":scene,"local_file":str(path.relative_to(ROOT)),"title":"Graphical local fallback","artist":"AI Video Automation","license":"Generated locally","pageurl":"","url":"","mime":"image/jpeg","score":0})
             print(f"Scene {scene_index}: no external visual match; graphical fallback")
             continue
         try:
