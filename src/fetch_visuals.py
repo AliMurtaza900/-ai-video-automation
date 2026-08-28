@@ -29,11 +29,8 @@ def request_json(url, params, attempts=2):
         try:
             response = requests.get(url, params=params, timeout=12, headers=UA)
             if response.status_code == 429:
-                retry = response.headers.get("Retry-After")
-                delay = int(retry) if retry and retry.isdigit() else min(60, 4 * (2 ** attempt))
-                print(f"Rate limited by {url}; waiting {delay}s")
-                time.sleep(delay)
-                continue
+                print(f"Rate limited by {url}; skipping instead of waiting")
+                return {}
             response.raise_for_status()
             return response.json()
         except Exception as exc:

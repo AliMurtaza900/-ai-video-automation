@@ -39,6 +39,20 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("00:00:00,000 --> 00:00:01,234", path.read_text())
             render_video.OUTPUT = original
 
+    def test_voice_generation_passes_selected_voice(self):
+        source = (Path(__file__).resolve().parents[1] / "src" / "add_voice.py").read_text(encoding="utf-8")
+        self.assertIn("async def make_voice(text: str, output: Path, voice: str)", source)
+        self.assertIn("asyncio.run(make_voice(text, audio_file, voice))", source)
+
+    def test_quota_errors_skip_the_exhausted_model(self):
+        class QuotaError(Exception):
+            code = 429
+
+            def __str__(self):
+                return "429 RESOURCE_EXHAUSTED quota exceeded free_tier"
+
+        self.assertTrue(main.is_quota_exhausted(QuotaError()))
+
 
 if __name__ == "__main__":
     unittest.main()
