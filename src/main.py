@@ -55,13 +55,22 @@ def save_history(script):
 def error_code(exc):
     return getattr(exc, "code", None) or getattr(getattr(exc, "response", None), "status_code", None)
 
+def is_quota_exhausted(exc):
+    text = str(exc).lower()
+    return error_code(exc) == 429 and (
+        "quota exceeded" in text
+        or "perday" in text
+        or "free_tier" in text
+        or "resource_exhausted" in text
+    )
+
 def generate(client, model, prompt):
     for attempt in range(3):
         try:
             return client.models.generate_content(model=model, contents=prompt)
         except Exception as exc:
             code = error_code(exc)
-            if code == 429 or code not in {500, 502, 503, 504} or attempt == 2:
+            if is_quota_exhausted(exc) or code not in {500, 502, 503, 504} or attempt == 2:
                 raise
             delay = min(30, 3 * (2 ** attempt))
             print(f"Gemini {model} temporary error {code}; retrying in {delay}s...")
