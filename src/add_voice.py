@@ -68,7 +68,7 @@ def main():
         for attempt in range(1, 4):
             try:
                 audio_file.unlink(missing_ok=True)
-                asyncio.run(make_voice(text, audio_file))
+                asyncio.run(make_voice(text, audio_file, voice))
                 if audio_file.stat().st_size < 10000:
                     raise RuntimeError("TTS returned a tiny audio file")
                 duration = duration_seconds(audio_file)

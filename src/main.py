@@ -115,7 +115,7 @@ def main():
                 except Exception as exc:
                     code = error_code(exc)
                     print(f"{model} attempt {attempt + 1} failed ({code or type(exc).__name__}): {exc}")
-                    if code in {401, 403}:
+                    if code in {401, 403} or is_quota_exhausted(exc):
                         break
                     if attempt == 0:
                         prompt += "\nRegenerate and strictly obey every rule."
