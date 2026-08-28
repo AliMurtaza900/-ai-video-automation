@@ -57,7 +57,11 @@ jobs:
           git config user.name "ai-video-automation[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/topic_history.json
-          if git diff --cached --quiet; then exit 0; fi          git commit -m "Update topic memory [skip ci]"
+          if git diff --cached --quiet; then
+            echo "Topic memory unchanged; nothing to commit."
+            exit 0
+          fi
+          git commit -m "Update topic memory [skip ci]"
           git pull --rebase origin main
           git push origin HEAD:main
 
