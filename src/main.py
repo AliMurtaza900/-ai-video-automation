@@ -3,7 +3,6 @@ import os
 import time
 from pathlib import Path
 from google import genai
-from google.genai import errors
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
@@ -12,31 +11,31 @@ HISTORY_FILE = DATA / "topic_history.json"
 OUTPUT.mkdir(exist_ok=True)
 DATA.mkdir(exist_ok=True)
 
-# Prefer the newest capable Flash model first, then fall back to stable 3.5 variants.
 MODELS = ["gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]
 BASE_PROMPT = """
 Create one original short-form video narration about ONE specific, genuinely interesting fact.
-The finished narration will be voiced and edited automatically for a vertical YouTube Short.
 
 PRIMARY GOAL:
 {goal}
 
-STRICT OUTPUT RULES:
-- Return narration only. No title, labels, bullets, markdown, emojis, stage directions, or quotation marks.
-- Aim for 75-105 words so the finished narration naturally lands around 30-45 seconds.
-- Open with a punchy curiosity hook in the first sentence.
-- Use short, natural sentences with varied rhythm. Avoid filler and repeated phrases.
-- Explain the fact clearly enough that a viewer understands why it is surprising.
-- End with a memorable curiosity/payoff line rather than "like and subscribe."
-- Do not invent statistics, names, dates, quotes, or claims. If a detail is uncertain, leave it out.
-- Keep the topic safe for general audiences and suitable for monetized YouTube Shorts.
-- Make every sentence visually describable so the video can find useful public-domain/open-license imagery.
-- Do not repeat any recent topic/concept below. Choose a clearly different subject, not a rewording.
+RULES:
+- Return narration only: no title, labels, bullets, markdown, emojis, or stage directions.
+- Aim for 75-105 words.
+- Open with a curiosity hook and finish with a memorable payoff.
+- Do not invent statistics, names, dates, quotes, or uncertain claims.
+- Keep it safe for general audiences and monetized YouTube Shorts.
+- Make every sentence visually describable.
+- Do not repeat recent topics below.
 
-Recent topics/scripts to avoid:
+Recent topics:
 {recent}
 """
 
+FALLBACK_SCRIPTS = [
+"A day on Venus is longer than a year on Venus. Venus spins so slowly that one full rotation takes about 243 Earth days, while it completes one trip around the Sun in about 225 Earth days. That means your calendar year would finish before your day did. Venus has another strange twist: it rotates in the opposite direction from most planets. So the planet next door to Earth is basically running on a completely different clock.",
+"Octopuses have three hearts, but that is not even the strangest part. Two hearts pump blood toward the gills, while the third sends it around the rest of the body. Even stranger, when an octopus swims, the main heart temporarily stops beating. That is one reason octopuses often prefer crawling instead of swimming when they can. Every time one takes off through the water, its body is doing something remarkably different from when it walks.",
+"Bananas are berries, but strawberries are not botanical berries. In botany, a berry develops from one flower with one ovary and usually contains several seeds inside its flesh. A banana fits that definition surprisingly well. A strawberry does not, because the little dots on its surface are actually individual fruits. So the fruit aisle at a supermarket is quietly breaking the rules you learned from everyday language."
+]
 
 def load_history():
     try:
@@ -46,77 +45,76 @@ def load_history():
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return []
 
-
 def save_history(script):
     history = load_history()
     fingerprint = " ".join(script.lower().split())[:180]
-    if fingerprint in history:
-        return
-    history.append(fingerprint)
-    history = history[-40:]
-    HISTORY_FILE.write_text(json.dumps({"topics": history}, indent=2), encoding="utf-8")
+    if fingerprint not in history:
+        history.append(fingerprint)
+    HISTORY_FILE.write_text(json.dumps({"topics": history[-40:]}, indent=2), encoding="utf-8")
 
+def error_code(exc):
+    return getattr(exc, "code", None) or getattr(getattr(exc, "response", None), "status_code", None)
 
-def generate_with_retry(client, model, prompt, attempts=4):
-    for attempt in range(attempts):
+def generate(client, model, prompt):
+    for attempt in range(3):
         try:
             return client.models.generate_content(model=model, contents=prompt)
-        except errors.ServerError as exc:
-            if getattr(exc, "code", None) != 503 or attempt == attempts - 1:
+        except Exception as exc:
+            code = error_code(exc)
+            if code == 429 or code not in {500, 502, 503, 504} or attempt == 2:
                 raise
-            delay = 5 * (2 ** attempt)
-            print(f"Gemini {model} is temporarily unavailable (503). Retrying in {delay}s...")
+            delay = min(30, 3 * (2 ** attempt))
+            print(f"Gemini {model} temporary error {code}; retrying in {delay}s...")
             time.sleep(delay)
-
 
 def validate_script(script):
     words = script.split()
     if not 60 <= len(words) <= 125:
-        raise RuntimeError(f"Generated narration length is {len(words)} words; expected 60-125")
+        raise RuntimeError(f"Invalid narration length: {len(words)} words")
     if any(token in script for token in ("```", "**", "#")):
-        raise RuntimeError("Generated narration contains formatting instead of narration-only output")
+        raise RuntimeError("Narration contains formatting")
     if script.count("!") > 3:
-        raise RuntimeError("Generated narration is excessively punctuated")
+        raise RuntimeError("Narration is excessively punctuated")
 
+def fallback_script(history):
+    used = set(history)
+    for script in FALLBACK_SCRIPTS:
+        if " ".join(script.lower().split())[:180] not in used:
+            return script
+    return FALLBACK_SCRIPTS[len(history) % len(FALLBACK_SCRIPTS)]
 
 def main():
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not configured in GitHub Secrets")
-
-    client = genai.Client(api_key=api_key)
     history = load_history()
     recent = "\n".join(f"- {item}" for item in history[-20:]) or "- none yet"
-    goal = os.environ.get("VIDEO_GOAL", "Create the best current AI automation YouTube Short").strip()
-    if not goal:
-        goal = "Create the best current AI automation YouTube Short"
+    goal = os.environ.get("VIDEO_GOAL", "Create a high-retention, monetization-safe YouTube Short about a genuinely surprising fact").strip() or "Create a surprising educational YouTube Short"
     prompt = BASE_PROMPT.format(goal=goal, recent=recent)
-
-    last_error = None
-    for model in MODELS:
-        for generation_attempt in range(2):
-            try:
-                response = generate_with_retry(client, model, prompt)
-                script = (response.text or "").strip()
-                if not script:
-                    raise RuntimeError(f"Gemini returned an empty response from {model}")
-                validate_script(script)
-                (OUTPUT / "script.txt").write_text(script, encoding="utf-8")
-                save_history(script)
-                print(script)
-                print(f"Script generated successfully with {model} ({len(script.split())} words).")
-                return
-            except errors.ServerError as exc:
-                last_error = exc
-                print(f"{model} unavailable; trying again or the next model...")
-            except RuntimeError as exc:
-                last_error = exc
-                print(f"{model} produced an invalid narration: {exc}")
-                if generation_attempt == 0:
-                    prompt += "\nIMPORTANT: The previous output failed validation. Regenerate it within all rules."
-
-    raise RuntimeError(f"No valid narration was generated: {last_error}")
-
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if api_key:
+        client = genai.Client(api_key=api_key)
+        for model in MODELS:
+            for attempt in range(2):
+                try:
+                    response = generate(client, model, prompt)
+                    script = (response.text or "").strip()
+                    if not script:
+                        raise RuntimeError("Gemini returned empty text")
+                    validate_script(script)
+                    (OUTPUT / "script.txt").write_text(script, encoding="utf-8")
+                    save_history(script)
+                    print(f"Generated with {model}: {len(script.split())} words")
+                    return
+                except Exception as exc:
+                    code = error_code(exc)
+                    print(f"{model} attempt {attempt + 1} failed ({code or type(exc).__name__}): {exc}")
+                    if code in {401, 403}:
+                        break
+                    if attempt == 0:
+                        prompt += "\nRegenerate and strictly obey every rule."
+    script = fallback_script(history)
+    validate_script(script)
+    (OUTPUT / "script.txt").write_text(script, encoding="utf-8")
+    save_history(script)
+    print(f"Using local fallback narration: {len(script.split())} words")
 
 if __name__ == "__main__":
     main()

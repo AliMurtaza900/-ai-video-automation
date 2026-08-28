@@ -2,6 +2,7 @@ name: Generate AI Video
 
 on:
   workflow_dispatch:
+  pull_request:
   schedule:
     - cron: '0 6 * * *'
     - cron: '0 12 * * *'
@@ -18,117 +19,75 @@ permissions:
 env:
   PYTHONUNBUFFERED: '1'
   FFMPEG_THREADS: '2'
-  REPO_URL: https://github.com/AliMurtaza900/-ai-video-automation.git
 
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
-      - name: Checkout repository without GitHub Actions
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -e
-          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/AliMurtaza900/-ai-video-automation.git" repo
-          cd repo
-          git checkout "${GITHUB_SHA}"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Install ffmpeg
-        working-directory: repo
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -n 1
 
       - name: Install Python dependencies
-        working-directory: repo
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
 
-      - name: Generate AI script (retry transient failures)
-        working-directory: repo
+      - name: Validate pipeline code
+        run: |
+          python -m compileall -q src
+          python -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Generate AI script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           VIDEO_GOAL: "Create a high-retention, monetization-safe YouTube Short about a genuinely surprising fact"
-        run: |
-          for attempt in 1 2 3; do
-            python src/main.py && exit 0
-            echo "Script generation attempt $attempt failed; retrying..."
-            sleep $((attempt * 10))
-          done
-          exit 1
+        run: python src/main.py
 
       - name: Persist topic memory
-        working-directory: repo
+        if: github.event_name != 'pull_request'
         run: |
           set -e
           git config user.name "ai-video-automation[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/topic_history.json
-          if git diff --cached --quiet; then
-            echo "No topic history changes to commit."
-            exit 0
-          fi
-          git commit -m "Update topic memory"
-          for attempt in 1 2 3; do
-            if git fetch origin main && git rebase origin/main && git push origin HEAD:main; then
-              exit 0
-            fi
-            echo "Topic history push attempt $attempt failed; retrying..."
-            git rebase --abort 2>/dev/null || true
-            sleep $((attempt * 5))
-          done
-          echo "Could not persist topic history; video generation will continue."
+          if git diff --cached --quiet; then exit 0; fi          git commit -m "Update topic memory [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main
 
-      - name: Fetch relevant free visuals (retry transient failures)
-        working-directory: repo
-        run: |
-          for attempt in 1 2 3; do
-            python src/fetch_visuals_v2.py && exit 0
-            echo "Visual download attempt $attempt failed; retrying..."
-            sleep $((attempt * 10))
-          done
-          exit 1
+      - name: Fetch resilient visuals
+        run: python src/fetch_visuals.py
 
-      - name: Generate AI voice and word timings
-        working-directory: repo
-        run: |
-          for attempt in 1 2 3; do
-            python src/add_voice.py && exit 0
-            echo "Voice generation attempt $attempt failed; retrying..."
-            sleep $((attempt * 10))
-          done
-          exit 1
+      - name: Generate AI voice and timings
+        run: python src/add_voice.py
 
       - name: Render final vertical Short
-        working-directory: repo
         run: python src/render_video.py
 
-      - name: Validate final video before upload
-        working-directory: repo
+      - name: Validate final video
         run: |
-          set -e
+          set -euo pipefail
           test -s output/test-video.mp4
           test -s output/voice.mp3
-          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of csv=p=0 output/test-video.mp4
+          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of csv=p=0 output/test-video.mp4
           ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate -of csv=p=0 output/test-video.mp4
           duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/test-video.mp4)
           python - "$duration" <<'PY'
           import sys
           d = float(sys.argv[1])
-          if d < 10 or d > 46:
+          if not 10 <= d <= 46:
               raise SystemExit(f"Invalid video duration: {d:.2f}s")
           print(f"Video validation passed: {d:.2f}s")
           PY
 
-      - name: Prepare upload copy
-        working-directory: repo
-        run: |
-          ffmpeg -y -i output/test-video.mp4 -i output/voice.mp3 \
-            -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -b:a 128k \
-            -shortest -movflags +faststart output/final-video.mp4
-
       - name: Upload final video to YouTube
-        working-directory: repo
+        if: github.event_name != 'pull_request'
         env:
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
@@ -138,3 +97,14 @@ jobs:
           YOUTUBE_CATEGORY_ID: "27"
           YOUTUBE_DESCRIPTION: "A short, surprising fact narrated and edited automatically for YouTube Shorts. Educational content for general audiences."
         run: python src/youtube_upload.py
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-video-diagnostics-${{ github.run_id }}
+          path: |
+            output/
+            assets/visuals/sources.txt
+          if-no-files-found: ignore
+          retention-days: 7
