@@ -76,11 +76,11 @@ jobs:
       - name: Validate final video
         run: |
           set -euo pipefail
-          test -s output/test-video.mp4
+          test -s output/final-video.mp4
           test -s output/voice.mp3
-          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of csv=p=0 output/test-video.mp4
-          ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate -of csv=p=0 output/test-video.mp4
-          duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/test-video.mp4)
+          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of csv=p=0 output/final-video.mp4
+          ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate -of csv=p=0 output/final-video.mp4
+          duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/final-video.mp4)
           python - "$duration" <<'PY'
           import sys
           d = float(sys.argv[1])
