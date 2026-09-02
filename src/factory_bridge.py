@@ -64,7 +64,7 @@ def main() -> int:
 
     python = sys.executable
     run([python, "src/main.py"])
-    run([python, "src/fetch_visuals_v2.py"])
+    run([python, "src/fetch_visuals.py"])
     run([python, "src/add_voice.py"])
     run([python, "src/render_video.py"])
 
