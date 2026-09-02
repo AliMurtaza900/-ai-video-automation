@@ -141,7 +141,7 @@ def main():
     filter_graph, duration = ffmpeg_filter_for(files, shot_seconds)
     base = OUTPUT / "video_base.mp4"
     captioned = OUTPUT / "video_captioned.mp4"
-    output = OUTPUT / "test-video.mp4"
+    output = OUTPUT / "final-video.mp4"
 
     cmd = ["ffmpeg", "-y"]
     for path in files:
