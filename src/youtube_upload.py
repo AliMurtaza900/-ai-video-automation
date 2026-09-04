@@ -4,6 +4,7 @@ import os
 import time
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -16,17 +17,64 @@ ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
 UPLOAD_RECORD = OUTPUT / "youtube_upload.json"
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 
 def get_credentials():
+    """Build YouTube credentials from the long-lived refresh-token secret.
+
+    GitHub Actions should persist only the refresh token as a secret. Google
+    access tokens are intentionally short-lived and are refreshed on demand
+    by google-auth; they must never be committed to the repository.
+    """
     refresh_token = os.environ.get("YOUTUBE_REFRESH_TOKEN")
     client_id = os.environ.get("YOUTUBE_CLIENT_ID")
     client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET")
-    missing = [name for name, value in {"YOUTUBE_REFRESH_TOKEN": refresh_token, "YOUTUBE_CLIENT_ID": client_id, "YOUTUBE_CLIENT_SECRET": client_secret}.items() if not value]
+    missing = [
+        name
+        for name, value in {
+            "YOUTUBE_REFRESH_TOKEN": refresh_token,
+            "YOUTUBE_CLIENT_ID": client_id,
+            "YOUTUBE_CLIENT_SECRET": client_secret,
+        }.items()
+        if not value
+    ]
     if missing:
         raise RuntimeError("Missing GitHub secrets: " + ", ".join(missing))
-    creds = Credentials(token=None, refresh_token=refresh_token, token_uri="https://oauth2.googleapis.com/token", client_id=client_id, client_secret=client_secret, scopes=SCOPES)
-    creds.refresh(Request())
+
+    # Do not persist or cache the short-lived access token. Reconstruct the
+    # credential from the persistent refresh token on every workflow run.
+    creds = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri=TOKEN_URI,
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=SCOPES,
+    )
+
+    try:
+        # This obtains a fresh access token using the persistent refresh token.
+        # Subsequent API requests can refresh it again automatically if needed.
+        creds.refresh(Request())
+    except RefreshError as exc:
+        detail = str(exc)
+        if "invalid_grant" in detail.lower():
+            raise RuntimeError(
+                "YouTube refresh token was rejected by Google (invalid_grant). "
+                "Re-authorize the YouTube OAuth app with offline access and replace "
+                "the GitHub YOUTUBE_REFRESH_TOKEN secret. If the Google OAuth app "
+                "is still in Testing mode, move it to Production to avoid the "
+                "short testing-mode refresh-token lifetime."
+            ) from exc
+        raise RuntimeError(
+            "YouTube OAuth token refresh failed. Check YOUTUBE_CLIENT_ID, "
+            "YOUTUBE_CLIENT_SECRET, and YOUTUBE_REFRESH_TOKEN."
+        ) from exc
+
+    if not creds.valid or not creds.token:
+        raise RuntimeError("Google returned an invalid YouTube access token after refresh")
+
     return creds
 
 
