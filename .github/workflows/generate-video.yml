@@ -1,11 +1,6 @@
 name: Generate AI Video
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/zero_dollar_3d_engine_v2.py'
-      - 'src/normal_motion_engine.py'
   workflow_dispatch:
   schedule:
     - cron: '0 6 * * *'
