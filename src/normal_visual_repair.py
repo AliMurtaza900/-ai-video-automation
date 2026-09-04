@@ -2,11 +2,16 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
-from fetch_visuals import download, make_local_fallback, search_candidates
-
 ROOT = Path(__file__).resolve().parent.parent
+# Support both `python -m src.normal_visual_repair` and direct execution.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.fetch_visuals import download, make_local_fallback, search_candidates
+
 OUTPUT = ROOT / "output"
 PRODUCTION = OUTPUT / "normal_production"
 PLAN = PRODUCTION / "director_plan.json"
