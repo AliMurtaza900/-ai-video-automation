@@ -1,8 +1,8 @@
 """Motion orchestrator for the normal-video pipeline.
 
-The normal pipeline now prefers the zero-dollar Blender 3D backend. Existing
-free-source video and Pillow motion remain available only as explicit opt-in
-fallbacks. Kids-animation engines are untouched.
+Normal videos use the richer zero-dollar Blender 3D backend. Existing
+kids-animation engines are intentionally untouched, and legacy still-image
+fallback remains opt-in only.
 """
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ VISUALS = ROOT / "assets" / "visuals"
 WORK = OUTPUT / "normal_production" / "motion_scenes"
 MANIFEST = OUTPUT / "normal_production" / "motion_manifest.json"
 FINAL = OUTPUT / "cinematic-video.mp4"
-VIDEO_EXTS = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".ogv"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
 
@@ -27,19 +26,7 @@ def run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True, cwd=ROOT)
 
 
-def normalize_video(source: Path, target: Path, seconds: float = 4.0) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    run([
-        "ffmpeg", "-y", "-stream_loop", "-1", "-i", str(source),
-        "-t", str(max(1.8, min(8.0, seconds))),
-        "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,fps=30",
-        "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
-        "-pix_fmt", "yuv420p", str(target),
-    ])
-
-
 def run_3d() -> bool:
-    """Run the real 3D backend and make its result the canonical cinematic layer."""
     required = os.getenv("ZERO_DOLLAR_3D_REQUIRED", "true").lower() not in {"0", "false", "no", "off"}
     blender = os.getenv("BLENDER_BIN") or shutil.which("blender")
     if not blender:
@@ -47,18 +34,20 @@ def run_3d() -> bool:
             raise RuntimeError("ZERO_DOLLAR_3D_REQUIRED=true but Blender is not installed")
         return False
     try:
-        run(["python", "-m", "src.zero_dollar_3d_engine"])
+        run(["python", "-m", "src.zero_dollar_3d_engine_v2"])
         produced = OUTPUT / "normal_production" / "3d-animation.mp4"
         if not produced.exists() or produced.stat().st_size == 0:
-            raise RuntimeError("3D backend produced no video")
+            raise RuntimeError("Blender 3D backend produced no video")
         shutil.copy2(produced, FINAL)
         plan = json.loads(PLAN.read_text(encoding="utf-8"))
-        rows = []
-        for i, _ in enumerate(plan.get("scenes", []), 1):
-            rows.append({"scene": i, "source": "procedural-3d", "backend": "blender_eevee", "output": str(FINAL.relative_to(ROOT))})
+        scene_count = min(12, len(plan.get("scenes", [])))
+        rows = [
+            {"scene": i, "source": "procedural-3d-v2", "backend": "blender_eevee", "output": str(FINAL.relative_to(ROOT))}
+            for i in range(1, scene_count + 1)
+        ]
         MANIFEST.parent.mkdir(parents=True, exist_ok=True)
-        MANIFEST.write_text(json.dumps({"version": 4, "backend_order": ["blender_eevee"], "scenes": rows, "final": str(FINAL.relative_to(ROOT))}, indent=2) + "\n", encoding="utf-8")
-        print(f"3D animation backend ready: {FINAL}")
+        MANIFEST.write_text(json.dumps({"version": 5, "backend": "blender_eevee", "backend_order": ["blender_eevee"], "scenes": rows, "scene_count": scene_count, "final": str(FINAL.relative_to(ROOT))}, indent=2) + "\n", encoding="utf-8")
+        print(f"Blender 3D animation backend ready: {FINAL}")
         return True
     except Exception as exc:
         if required:
@@ -68,7 +57,7 @@ def run_3d() -> bool:
 
 
 def render_procedural_fallback() -> None:
-    """Legacy still-image motion fallback; disabled by default for normal production."""
+    """Legacy still-image motion fallback; disabled by default."""
     media = sorted(p for p in VISUALS.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS) if VISUALS.exists() else []
     if not media:
         raise RuntimeError("No visual assets found for fallback renderer")
