@@ -1,13 +1,12 @@
-import json
-import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from PIL import Image
 from src import normal_production_engine as engine
+from src import normal_cinematic_renderer as cinematic
 
 
 class NormalProductionTests(unittest.TestCase):
@@ -27,6 +26,17 @@ class NormalProductionTests(unittest.TestCase):
         self.assertEqual(result["scenes"][0]["scene_id"], 1)
         self.assertTrue(result["scenes"][0]["visual_prompt"])
         self.assertIsInstance(result["scenes"][0]["sfx"], list)
+
+    def test_motion_selection_is_deterministic(self):
+        scene = {"shot": "wide landscape", "camera_motion": "slow drift", "action": "show the horizon"}
+        self.assertEqual(cinematic.motion_for(scene, 1), "pan_right")
+        self.assertEqual(cinematic.motion_for(scene, 2), "pan_left")
+
+    def test_depth_frame_preserves_vertical_size(self):
+        image = Image.new("RGB", (1400, 2200), (40, 50, 70))
+        frame = cinematic.depth_frame(image, 0.5, "push_in", 1)
+        self.assertEqual(frame.size, (cinematic.WIDTH, cinematic.HEIGHT))
+        self.assertEqual(frame.mode, "RGB")
 
 
 if __name__ == "__main__":
