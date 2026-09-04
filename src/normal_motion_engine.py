@@ -66,12 +66,26 @@ def concat(clips: list[Path]) -> None:
     if not clips:
         raise RuntimeError("No motion clips were produced")
     manifest = WORK / "concat.txt"
-    manifest.write_text("\n".join(f"file '{p.resolve()}'" for p in clips) + "\n", encoding="utf-8")
+    lines = ["file '" + str(p.resolve()).replace("'", "'\\''") + "'" for p in clips]
+    manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
     run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(manifest),
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
         "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(FINAL),
     ])
+
+
+def render_procedural(source: Path, target: Path, scene: dict, scene_index: int, scene_count: int) -> None:
+    # When this file is executed directly (`python src/normal_motion_engine.py`),
+    # Python puts src/ on sys.path. Prefer the package import, then fall back to
+    # the sibling module so both execution modes are supported.
+    try:
+        from src.normal_cinematic_renderer import render_scene, scene_seconds
+    except ModuleNotFoundError:
+        from normal_cinematic_renderer import render_scene, scene_seconds
+
+    seconds = scene_seconds(OUTPUT / "voice.mp3", scene_count)
+    render_scene(source, target, scene, scene_index, seconds)
 
 
 def main() -> None:
@@ -102,9 +116,7 @@ def main() -> None:
         elif run_external_i2v(source, target, scene, i):
             backend = "external_i2v"
         else:
-            from src.normal_cinematic_renderer import render_scene, scene_seconds
-            seconds = scene_seconds(OUTPUT / "voice.mp3", len(scenes))
-            render_scene(source, target, scene, i, seconds)
+            render_procedural(source, target, scene, i, len(scenes))
             backend = "procedural_fallback"
 
         clips.append(target)
@@ -113,7 +125,7 @@ def main() -> None:
 
     concat(clips)
     report = {
-        "version": 2,
+        "version": 3,
         "backend_order": ["free_source_video", "external_i2v", "procedural_fallback"],
         "scenes": records,
         "final": str(FINAL.relative_to(ROOT)),
