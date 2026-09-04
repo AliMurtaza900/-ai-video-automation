@@ -63,6 +63,16 @@ jobs:
           if git diff --cached --quiet; then echo "Topic memory unchanged"; else git commit -m "Update topic memory [skip ci]"; git pull --rebase origin main; git push origin HEAD:main; fi
       - name: Fetch resilient visuals
         run: python src/fetch_visuals.py
+      - name: AI visual critic
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python src/normal_visual_critic.py
+      - name: Automatically repair weak visuals
+        run: python src/normal_visual_repair.py
+      - name: Re-check repaired visuals
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python src/normal_visual_critic.py
       - name: Generate AI voice and timings
         run: python src/add_voice.py
       - name: Render animated cinematic normal-video layer
@@ -78,6 +88,7 @@ jobs:
           test -s output/normal_production/director_plan.json
           test -s output/normal_production/visual_queries.json
           test -s output/normal_production/quality_report.json
+          test -s output/normal_production/visual_critic_report.json
           ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of csv=p=0 output/final-video.mp4
           ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate -of csv=p=0 output/final-video.mp4
           duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/final-video.mp4)
