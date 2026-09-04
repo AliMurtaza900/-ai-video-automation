@@ -1,8 +1,8 @@
 """Zero-cost cinematic animation layer for normal videos.
 
 This module is intentionally isolated from every kids-animation renderer.
-It turns the selected still visuals into moving cinematic shots using only
-Pillow and FFmpeg: camera motion, simulated depth/parallax, lighting sweeps,
+It turns selected still visuals into moving cinematic shots using only Pillow
+and FFmpeg: camera motion, simulated depth/parallax, lighting sweeps,
 atmospheric particles, vignette and scene transitions.
 """
 from __future__ import annotations
@@ -80,16 +80,9 @@ def move(image: Image.Image, progress: float, mode: str, strength: float = 1.0) 
 
 
 def depth_frame(image: Image.Image, progress: float, mode: str, index: int) -> Image.Image:
-    """Fake a restrained 2.5D camera move without paid AI or segmentation.
-
-    The blurred full-frame plate behaves like a distant background while a
-    feathered central plate moves slightly faster, creating perceived depth.
-    It is deliberately subtle so ordinary documentary photos do not look like
-    a duplicated/cut-out subject.
-    """
+    """Create a restrained 2.5D effect without paid AI or segmentation."""
     base = move(image, progress, mode, 0.78)
-    background = base.filter(ImageFilter.GaussianBlur(radius=2.2))
-    background = ImageEnhance.Brightness(background).enhance(0.92)
+    background = ImageEnhance.Brightness(base.filter(ImageFilter.GaussianBlur(radius=2.2))).enhance(0.92)
     frame = background.convert("RGBA")
 
     subject = move(image, min(1.0, progress * 1.12), mode, 1.0)
@@ -99,38 +92,37 @@ def depth_frame(image: Image.Image, progress: float, mode: str, index: int) -> I
     top = (subject.height - HEIGHT) // 2
     subject = subject.crop((left, top, left + WIDTH, top + HEIGHT)).convert("RGBA")
 
-    # Soft ellipse mask gives the center visual a foreground-plane feel.
+    # Feathered central plane: subtle enough for documentary photos, but it
+    # creates visible depth when the foreground and background drift differently.
     mask = Image.new("L", (WIDTH, HEIGHT), 0)
     from PIL import ImageDraw
     draw = ImageDraw.Draw(mask)
-    margin_x, margin_y = int(WIDTH * .10), int(HEIGHT * .10)
-    draw.ellipse((margin_x, margin_y, WIDTH - margin_x, HEIGHT - margin_y), fill=190)
-    mask = mask.filter(ImageFilter.GaussianBlur(radius=85))
-    frame.alpha_composite(subject, (0, 0), (0, 0, WIDTH, HEIGHT), mask)
+    mx, my = int(WIDTH * .08), int(HEIGHT * .07)
+    draw.ellipse((mx, my, WIDTH - mx, HEIGHT - my), fill=175)
+    mask = mask.filter(ImageFilter.GaussianBlur(radius=95))
+    frame = Image.composite(subject, frame, mask)
 
-    # Atmospheric particles are deterministic per scene, so reruns are stable.
-    text = " ".join(str(index) + " " + str(mode)).lower()
+    # Atmospheric particles: deterministic so the same run is reproducible.
     if index % 3 != 0:
         overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
         d = ImageDraw.Draw(overlay)
         rng = random.Random(index * 7919)
-        for _ in range(22):
+        for _ in range(24):
             px = rng.randint(0, WIDTH - 1)
             py = rng.randint(0, HEIGHT - 1)
             radius = rng.choice((1, 1, 2, 3))
-            alpha = rng.randint(10, 28)
+            alpha = rng.randint(8, 25)
             d.ellipse((px-radius, py-radius, px+radius, py+radius), fill=(255, 255, 255, alpha))
-        drift = int(18 * math.sin(progress * math.pi * 2))
-        overlay = ImageChops_offset(overlay, drift, -drift)
+        overlay = ImageChops_offset(overlay, int(14 * math.sin(progress * math.pi * 2)),
+                                    int(-10 * math.cos(progress * math.pi * 2)))
         frame.alpha_composite(overlay)
 
-    # Slow cinematic light sweep / vignette.
+    # Moving soft light and vignette.
     light = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
     ld = ImageDraw.Draw(light)
     cx = int(WIDTH * (.12 + .76 * progress))
     ld.ellipse((cx - 520, int(HEIGHT * .08), cx + 520, int(HEIGHT * .92)), fill=(255, 235, 190, 18))
-    light = light.filter(ImageFilter.GaussianBlur(120))
-    frame.alpha_composite(light)
+    frame.alpha_composite(light.filter(ImageFilter.GaussianBlur(120)))
 
     vignette = Image.new("L", (WIDTH, HEIGHT), 0)
     vd = ImageDraw.Draw(vignette)
@@ -147,13 +139,10 @@ def ImageChops_offset(image: Image.Image, x: int, y: int) -> Image.Image:
     return ImageChops.offset(image, x, y)
 
 
-def grade(image: Image.Image, progress: float) -> Image.Image:
+def grade(image: Image.Image) -> Image.Image:
     image = ImageEnhance.Contrast(image).enhance(1.08)
     image = ImageEnhance.Color(image).enhance(1.05)
-    image = ImageEnhance.Brightness(image).enhance(1.01)
-    if progress < .08:
-        image = image.filter(ImageFilter.UnsharpMask(radius=1, percent=105, threshold=3))
-    return image
+    return ImageEnhance.Brightness(image).enhance(1.01)
 
 
 def motion_for(scene: dict, index: int) -> str:
@@ -188,8 +177,7 @@ def render_scene(image_path: Path, output: Path, scene: dict, index: int, second
     pattern = WORK / f"frame_{index:03d}_%05d.jpg"
     for n in range(frames):
         p = n / (frames - 1)
-        frame = depth_frame(image, p, motion, index)
-        grade(frame, p).save(pattern.as_posix() % n, quality=90)
+        grade(depth_frame(image, p, motion, index)).save(pattern.as_posix() % n, quality=90)
     run(["ffmpeg", "-y", "-framerate", str(FPS), "-i", str(pattern),
          "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
          "-pix_fmt", "yuv420p", "-an", str(output)])
@@ -205,8 +193,7 @@ def main() -> None:
     visuals = sorted(p for p in VISUALS.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}) if VISUALS.exists() else []
     if not scenes or not visuals:
         raise RuntimeError("Need director scenes and downloaded visuals")
-    audio = OUTPUT / "voice.mp3"
-    seconds = scene_seconds(audio, len(scenes))
+    seconds = scene_seconds(OUTPUT / "voice.mp3", len(scenes))
     rendered = []
     for i, scene in enumerate(scenes, 1):
         out = WORK / f"scene_{i:03d}.mp4"
@@ -220,7 +207,7 @@ def main() -> None:
          "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
          "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(final)])
     actual = media_duration(final)
-    print(f"Cinematic animated normal video ready: {final} ({actual:.2f}s, depth/parallax/lighting/particles)")
+    print(f"Cinematic animated normal video ready: {final} ({actual:.2f}s; parallax, lighting, particles)")
 
 
 if __name__ == "__main__":
