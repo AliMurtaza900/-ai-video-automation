@@ -17,6 +17,7 @@ OPENVERSE_API = "https://api.openverse.org/v1/images/"
 UA = {"User-Agent": "AI-Video-Automation/3.4 (GitHub Actions)"}
 VIDEO_MIMES = {"video/mp4", "video/webm", "video/ogg"}
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+MAX_VISUALS = 18
 STOP = set("about after again because before could every first from have into more most never only other over really their there these this those through what when where which while with would your that than they them then were will also some many fact facts interesting people thing story stories history video videos footage of the and are was for not you but has had its our their documentary image images clip clips scene scenes".split())
 
 
@@ -44,8 +45,20 @@ def request_json(url, params, attempts=2):
 
 
 def scene_sentences(script):
-    parts = re.split(r"(?<=[.!?])\s+", script.strip())
-    return [clean(s) for s in parts if clean(s)][:12]
+    parts = [clean(s) for s in re.split(r"(?<=[.!?])\s+", script.strip()) if clean(s)]
+    scenes = []
+    for part in parts:
+        words = part.split()
+        # Split long narration into additional visual beats so a single picture
+        # is not held on screen for several seconds.
+        if len(words) > 11:
+            chunk_size = max(7, (len(words) + 1) // 2)
+            scenes.extend(" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size))
+        else:
+            scenes.append(part)
+        if len(scenes) >= MAX_VISUALS:
+            return scenes[:MAX_VISUALS]
+    return scenes[:MAX_VISUALS]
 
 
 def terms_for_scene(sentence):
@@ -73,11 +86,7 @@ def normalize_tags(tags):
 
 
 def openverse_search(query, limit=12):
-    try:
-        data = request_json(OPENVERSE_API, {"q": query, "page": 1, "page_size": limit, "mature": "false"})
-    except Exception as exc:
-        print(f"Openverse search failed for '{query}': {exc}")
-        return []
+    data = request_json(OPENVERSE_API, {"q": query, "page": 1, "page_size": limit, "mature": "false"})
     results = []
     for item in data.get("results", []):
         url = item.get("url")
@@ -90,19 +99,7 @@ def openverse_search(query, limit=12):
         if width < 1000 or height < 700:
             continue
         tags = normalize_tags(item.get("tags"))
-        results.append({
-            "url": url,
-            "mime": "image/jpeg" if str(item.get("filetype", "")).lower() in {"jpg", "jpeg"} else "image/png",
-            "width": width,
-            "height": height,
-            "duration": 0,
-            "title": clean(item.get("title", query)),
-            "artist": clean(item.get("creator", "")),
-            "license": clean(item.get("license", "")),
-            "description": clean(" ".join(tags)),
-            "pageurl": item.get("foreign_landing_url") or item.get("detail_url", ""),
-            "source": "Openverse",
-        })
+        results.append({"url": url, "mime": "image/jpeg" if str(item.get("filetype", "")).lower() in {"jpg", "jpeg"} else "image/png", "width": width, "height": height, "duration": 0, "title": clean(item.get("title", query)), "artist": clean(item.get("creator", "")), "license": clean(item.get("license", "")), "description": clean(" ".join(tags)), "pageurl": item.get("foreign_landing_url") or item.get("detail_url", ""), "source": "Openverse"})
     return results
 
 
@@ -113,10 +110,7 @@ def commons_search(query, video=False, limit=10):
     for page in data.get("query", {}).get("pages", {}).values():
         info = page.get("imageinfo", [{}])[0]
         url, mime = info.get("url"), info.get("mime", "")
-        if not url:
-            continue
-        is_video = mime in VIDEO_MIMES
-        if video != is_video:
+        if not url or (video != (mime in VIDEO_MIMES)):
             continue
         if not video and not url.lower().split("?")[0].endswith(IMAGE_EXTS):
             continue
@@ -127,29 +121,17 @@ def commons_search(query, video=False, limit=10):
         if width < 720 or height < 480:
             continue
         meta = info.get("extmetadata", {})
-        results.append({
-            "url": url, "mime": mime, "width": width, "height": height,
-            "duration": float(info.get("duration") or 0),
-            "title": clean(meta.get("ObjectName", {}).get("value", page.get("title", query))),
-            "artist": clean(meta.get("Artist", {}).get("value", "")),
-            "license": clean(meta.get("LicenseShortName", {}).get("value", "")),
-            "description": clean(meta.get("ImageDescription", {}).get("value", "")),
-            "pageurl": page.get("fullurl", f"https://commons.wikimedia.org/wiki/{quote(page.get('title',''))}"),
-            "source": "Wikimedia Commons",
-        })
+        results.append({"url": url, "mime": mime, "width": width, "height": height, "duration": float(info.get("duration") or 0), "title": clean(meta.get("ObjectName", {}).get("value", page.get("title", query))), "artist": clean(meta.get("Artist", {}).get("value", "")), "license": clean(meta.get("LicenseShortName", {}).get("value", "")), "description": clean(meta.get("ImageDescription", {}).get("value", "")), "pageurl": page.get("fullurl", f"https://commons.wikimedia.org/wiki/{quote(page.get('title',''))}"), "source": "Wikimedia Commons"})
     return results
 
 
 def score(candidate, terms, scene, prefer_video=False):
-    title = candidate["title"].lower()
-    desc = candidate["description"].lower()
+    title, desc = candidate["title"].lower(), candidate["description"].lower()
     words = set(re.findall(r"[a-z]{4,}", scene.lower())) - STOP
     value = 0
     for term in terms:
-        if term in title:
-            value += 18
-        elif term in desc:
-            value += 7
+        if term in title: value += 18
+        elif term in desc: value += 7
     value += min(24, sum(3 for word in words if word in title or word in desc))
     if candidate["mime"] in VIDEO_MIMES:
         value += 45 if prefer_video else 15
@@ -195,16 +177,11 @@ def make_local_fallback(index, scene):
 
 def search_candidates(scene, terms, video):
     context = ["footage", "video"] if video else ["photo", "photograph"]
-    queries = [
-        " ".join(terms[:6] + context[:1]),
-        " ".join(terms[:5] + context[:1]),
-        " ".join(terms[:4] + context[:1]),
-    ]
+    queries = [" ".join(terms[:6] + context[:1]), " ".join(terms[:5] + context[:1]), " ".join(terms[:4] + context[:1])]
     candidates, seen = [], set()
     for query in queries:
         found = []
-        if not video:
-            found.extend(openverse_search(query, limit=10))
+        if not video: found.extend(openverse_search(query, limit=10))
         found.extend(commons_search(query, video=video, limit=6))
         for candidate in found:
             if candidate["url"] not in seen:
@@ -240,7 +217,6 @@ def main():
             path = make_local_fallback(len(selected), scene)
             selected.append(path)
             sources.append({"scene":scene_index,"scene_text":scene,"local_file":str(path.relative_to(ROOT)),"title":"Graphical local fallback","artist":"AI Video Automation","license":"Generated locally","pageurl":"","url":"","mime":"image/jpeg","score":0})
-            print(f"Scene {scene_index}: no external visual match; graphical fallback")
             continue
         try:
             path = download(chosen, len(selected))
@@ -257,15 +233,14 @@ def main():
         if chosen:
             used.add(chosen["url"]); value = score(chosen, terms, scene, chosen["mime"] in VIDEO_MIMES)
             sources.append({**chosen,"scene":scene_index,"scene_text":scene,"local_file":str(path.relative_to(ROOT)),"score":value})
-            print(f"Scene {scene_index}: {chosen['title']} (score={value}, {chosen['width']}x{chosen['height']}, {chosen['mime']})")
         else:
-            sources.append({"scene":scene_index,"scene_text":scene,"local_file":str(path.relative_to(ROOT)),"title":"Graphical local fallback","artist":"AI Video Automation","license":"Generated locally","pageurl":"","url":"","mime":"image/svg+xml","score":0})
+            sources.append({"scene":scene_index,"scene_text":scene,"local_file":str(path.relative_to(ROOT)),"title":"Graphical local fallback","artist":"AI Video Automation","license":"Generated locally","pageurl":"","url":"","mime":"image/jpeg","score":0})
         selected.append(path)
 
     if not selected: selected.append(make_local_fallback(0, scenes[0] if scenes else "Interesting fact"))
     (VISUALS / "sources.txt").write_text("\n".join(f"Scene {s['scene']} | score={s['score']} | {s['local_file']} | {s['title']} | {s['artist']} | {s['license']} | {s['pageurl']} | {s['url']}" for s in sources), encoding="utf-8")
     videos = sum(s["mime"] in VIDEO_MIMES for s in sources)
-    fallbacks = sum(s["mime"] == "image/svg+xml" for s in sources)
+    fallbacks = sum("fallback" in s["title"].lower() for s in sources)
     print(f"VISUAL_REPORT videos={videos} images={len(sources)-videos-fallbacks} fallbacks={fallbacks} total={len(sources)} scenes={len(scenes)}")
 
 if __name__ == "__main__": main()
