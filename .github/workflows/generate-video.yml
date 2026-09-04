@@ -65,10 +65,10 @@ jobs:
         run: python src/fetch_visuals.py
       - name: Generate AI voice and timings
         run: python src/add_voice.py
-      - name: Render cinematic normal-video layer
+      - name: Render animated cinematic normal-video layer
         run: python src/normal_cinematic_renderer.py
-      - name: Render final video with existing pipeline
-        run: python src/render_video.py
+      - name: Add captions and voice to cinematic layer
+        run: python src/normal_finalizer.py
       - name: Validate final video
         run: |
           set -euo pipefail
@@ -77,8 +77,17 @@ jobs:
           test -s output/cinematic-video.mp4
           test -s output/normal_production/director_plan.json
           test -s output/normal_production/visual_queries.json
+          test -s output/normal_production/quality_report.json
           ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of csv=p=0 output/final-video.mp4
           ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate -of csv=p=0 output/final-video.mp4
+          duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/final-video.mp4)
+          python - "$duration" <<'PY'
+          import sys
+          d = float(sys.argv[1])
+          if not 10 <= d <= 46:
+              raise SystemExit(f"Invalid video duration: {d:.2f}s")
+          print(f"Video validation passed: {d:.2f}s")
+          PY
       - name: Upload final video to YouTube
         if: github.event_name != 'pull_request'
         env:
