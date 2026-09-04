@@ -56,6 +56,14 @@ jobs:
           VIDEO_GOAL: "Create a high-retention, monetization-safe YouTube Short about a genuinely surprising fact"
         run: python src/main.py
 
+      - name: Build normal-video director plan
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python src/normal_production_engine.py
+
+      - name: Build cinematic visual plan
+        run: python src/normal_visual_planner.py
+
       - name: Persist topic memory
         if: github.event_name != 'pull_request'
         run: |
@@ -85,6 +93,8 @@ jobs:
           set -euo pipefail
           test -s output/final-video.mp4
           test -s output/voice.mp3
+          test -s output/normal_production/director_plan.json
+          test -s output/normal_production/visual_queries.json
           ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of csv=p=0 output/final-video.mp4
           ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate -of csv=p=0 output/final-video.mp4
           duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/final-video.mp4)
