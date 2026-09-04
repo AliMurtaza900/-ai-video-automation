@@ -21,6 +21,13 @@ VIDEO_MIMES = {"video/mp4", "video/webm", "video/ogg"}
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 MAX_VISUALS = 18
 PINTEREST_ENABLED = os.getenv("PINTEREST_ENABLED", "true").lower() not in {"0", "false", "no", "off"}
+OPENVERSE_ENABLED = os.getenv("OPENVERSE_ENABLED", "true").lower() not in {"0", "false", "no", "off"}
+OPENVERSE_TIMEOUT = float(os.getenv("OPENVERSE_TIMEOUT", "5"))
+OPENVERSE_MAX_FAILURES = int(os.getenv("OPENVERSE_MAX_FAILURES", "2"))
+OPENVERSE_BUDGET_SECONDS = float(os.getenv("OPENVERSE_BUDGET_SECONDS", "25"))
+_openverse_failures = 0
+_openverse_started_at = time.monotonic()
+_openverse_disabled_reason = ""
 STOP = set("about after again because before could every first from have into more most never only other over really their there these this those through what when where which while with would your that than they them then were will also some many fact facts interesting people thing story stories history video videos footage of the and are was for not you but has had its our their documentary image images clip clips scene scenes".split())
 
 
@@ -28,10 +35,10 @@ def clean(value):
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<.*?>", " ", str(value or "")))).strip()
 
 
-def request_json(url, params, attempts=2):
+def request_json(url, params, attempts=2, timeout=12):
     for attempt in range(attempts):
         try:
-            response = requests.get(url, params=params, timeout=12, headers=UA)
+            response = requests.get(url, params=params, timeout=timeout, headers=UA)
             if response.status_code == 429:
                 print(f"Rate limited by {url}; skipping")
                 return {}
@@ -87,7 +94,31 @@ def normalize_tags(tags):
 
 
 def openverse_search(query, limit=12):
-    data = request_json(OPENVERSE_API, {"q": query, "page": 1, "page_size": limit, "mature": "false"})
+    global _openverse_failures, _openverse_disabled_reason
+    if not OPENVERSE_ENABLED or _openverse_failures >= OPENVERSE_MAX_FAILURES:
+        return []
+    elapsed = time.monotonic() - _openverse_started_at
+    if elapsed >= OPENVERSE_BUDGET_SECONDS:
+        _openverse_disabled_reason = f"budget exhausted after {elapsed:.1f}s"
+        print(f"Openverse disabled: {_openverse_disabled_reason}")
+        return []
+
+    # Openverse is optional. Never let a slow third-party API consume the
+    # production job: one short request, no retry, and a small global budget.
+    data = request_json(
+        OPENVERSE_API,
+        {"q": query, "page": 1, "page_size": limit, "mature": "false"},
+        attempts=1,
+        timeout=max(1.0, OPENVERSE_TIMEOUT),
+    )
+    if not data:
+        _openverse_failures += 1
+        if _openverse_failures >= OPENVERSE_MAX_FAILURES:
+            _openverse_disabled_reason = f"{_openverse_failures} consecutive failures"
+            print(f"Openverse disabled for this run: {_openverse_disabled_reason}")
+        return []
+
+    _openverse_failures = 0
     results = []
     for item in data.get("results", []):
         url = item.get("url")
@@ -164,7 +195,6 @@ def pinterest_search(query, limit=12):
         return []
 
     # Extract direct pin image URLs from Pinterest HTML/serialized state.
-    # Keep the regex single-quoted so the character class is valid Python.
     urls = re.findall(r'https?://i\.pinimg\.com/[^"\s<]+', text)
     results, seen = [], set()
     for raw in urls:
