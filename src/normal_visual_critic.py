@@ -1,9 +1,4 @@
-"""AI-assisted visual critic for the isolated normal-video pipeline.
-
-Scores each selected scene visual against the director plan. Gemini is used when
-available; a conservative local heuristic keeps the pipeline runnable when AI
-quota/network access is unavailable.
-"""
+"""AI-assisted visual critic for the isolated normal-video pipeline."""
 from __future__ import annotations
 
 import json
@@ -20,15 +15,9 @@ VISUALS = ROOT / "assets" / "visuals"
 THRESHOLD = 80
 
 PROMPT = """
-You are a strict film/visual continuity critic. Evaluate this image for the
-specified storyboard scene. Return ONLY JSON:
-{"score":0,"relevance":0,"composition":0,"quality":0,"continuity":0,"issues":[],"repair_query":""}
-Scores are 0-100. relevance asks whether the image actually depicts the requested
-subject/action/location. composition asks whether it works as a premium vertical
-video frame. quality covers sharpness, artifacts, anatomy, exposure and visual
-quality. continuity checks whether it matches the stated style/character details.
-Be strict: a generic but attractive image is a failure if it does not depict the
-scene. repair_query must be a concise search query that would find a better image.
+You are a strict film/visual continuity critic. Evaluate this image for the specified storyboard scene.
+Return ONLY JSON: {"score":0,"relevance":0,"composition":0,"quality":0,"continuity":0,"issues":[],"repair_query":""}
+Scores are 0-100. Be strict: a generic attractive image fails if it does not depict the scene.
 """
 
 
@@ -46,25 +35,19 @@ def local_score(scene: dict, path: Path) -> dict:
 
 
 def gemini_score(scene: dict, path: Path) -> dict | None:
-    key = os.getenv("GEMINI_API_KEY")
+    key = os.getenv("GEMINI_API_KEY", "").strip()
     if not key or not path.exists() or path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
         return None
     try:
         from google import genai
         from google.genai import types
         client = genai.Client(api_key=key)
-        image_bytes = path.read_bytes()
-        contents = [
-            PROMPT,
-            "STORYBOARD SCENE:\n" + json.dumps(scene, ensure_ascii=False, indent=2),
-            types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg" if path.suffix.lower() in {".jpg", ".jpeg"} else "image/png"),
-        ]
+        mime = "image/jpeg" if path.suffix.lower() in {".jpg", ".jpeg"} else "image/png"
         response = client.models.generate_content(
             model=os.getenv("CRITIC_MODEL", os.getenv("DIRECTOR_MODEL", "gemini-3.7-flash")),
-            contents=contents,
+            contents=[PROMPT, "STORYBOARD SCENE:\n" + json.dumps(scene, ensure_ascii=False), types.Part.from_bytes(data=path.read_bytes(), mime_type=mime)],
         )
-        text = (response.text or "").strip()
-        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", (response.text or "").strip(), flags=re.I | re.S).strip()
         data = json.loads(text)
         if not isinstance(data, dict):
             return None
@@ -83,12 +66,22 @@ def gemini_score(scene: dict, path: Path) -> dict | None:
         return None
 
 
+def display_path(path: Path | None) -> str:
+    """Return a stable path even when tests use a temporary VISUALS directory."""
+    if path is None:
+        return ""
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def main() -> dict:
     if not PLAN.exists():
         raise RuntimeError("director_plan.json missing")
     plan = json.loads(PLAN.read_text(encoding="utf-8"))
     scenes = plan.get("scenes", [])
-    images = sorted([p for p in VISUALS.glob("visual_*") if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}])
+    images = sorted(p for p in VISUALS.glob("visual_*") if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"})
     results = []
     for index, scene in enumerate(scenes, 1):
         path = images[index - 1] if index - 1 < len(images) else None
@@ -97,11 +90,12 @@ def main() -> dict:
                       "issues": ["Missing visual"], "repair_query": str(scene.get("visual_prompt", scene.get("subject", "")))}
         else:
             result = gemini_score(scene, path) or local_score(scene, path)
-        result.update({"scene": index, "file": str(path.relative_to(ROOT)) if path else ""})
+        result.update({"scene": index, "file": display_path(path)})
         result["passed"] = result["score"] >= THRESHOLD
         results.append(result)
         print(f"Visual critic scene {index}: {result['score']}/100 {'PASS' if result['passed'] else 'REPAIR'}")
     report = {"threshold": THRESHOLD, "passed": all(r["passed"] for r in results), "scenes": results}
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return report
 
