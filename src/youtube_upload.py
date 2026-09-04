@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -125,6 +126,13 @@ def derive_title_from_script() -> str:
 
 
 def main():
+    # Lightweight CI preflight: validates the persistent refresh token without
+    # requiring a generated video and without uploading anything to YouTube.
+    if "--auth-check" in sys.argv:
+        get_credentials()
+        print("YouTube OAuth refresh check passed; persistent refresh token is usable.")
+        return
+
     video = OUTPUT / "final-video.mp4"
     if not video.exists() or video.stat().st_size == 0:
         raise RuntimeError(f"Video not found or empty: {video}")
