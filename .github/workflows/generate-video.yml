@@ -51,12 +51,18 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python src/normal_production_engine.py
-      - name: Build cinematic visual plan
-        run: python src/normal_visual_planner.py
       - name: Quality gate director plan
         run: python src/normal_quality_gate.py
       - name: Build character consistency bible
         run: python src/normal_character_consistency.py
+      - name: Build character reference manifest
+        run: python src/normal_reference_engine.py
+      - name: Build shot-level acting and cinematic direction
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python src/normal_scene_director.py
+      - name: Build cinematic visual plan
+        run: python src/normal_visual_planner.py
       - name: Persist topic memory
         run: |
           git config user.name "ai-video-automation[bot]"
@@ -77,7 +83,7 @@ jobs:
         run: python src/normal_visual_critic.py
       - name: Generate AI voice and timings
         run: python src/add_voice.py
-      - name: Render animated cinematic normal-video layer
+      - name: Generate real-motion cinematic scene layer
         run: python src/normal_motion_engine.py
       - name: Add captions and voice to cinematic layer
         run: python src/normal_finalizer.py
@@ -93,6 +99,8 @@ jobs:
           test -s output/normal_production/visual_critic_report.json
           test -s output/normal_production/character_bible.json
           test -s output/normal_production/character_scene_prompts.json
+          test -s output/normal_production/character_references.json
+          test -s output/normal_production/scene_shot_plan.json
           test -s output/normal_production/motion_manifest.json
           ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of csv=p=0 output/final-video.mp4
           ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate -of csv=p=0 output/final-video.mp4
