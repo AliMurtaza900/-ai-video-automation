@@ -1,4 +1,5 @@
 import html
+import os
 import re
 import time
 from pathlib import Path
@@ -13,10 +14,12 @@ VISUALS = ASSETS / "visuals"
 VISUALS.mkdir(parents=True, exist_ok=True)
 COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 OPENVERSE_API = "https://api.openverse.org/v1/images/"
+PINTEREST_SEARCH = "https://www.pinterest.com/search/pins/"
 UA = {"User-Agent": "AI-Video-Automation/3.4 (GitHub Actions)"}
 VIDEO_MIMES = {"video/mp4", "video/webm", "video/ogg"}
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 MAX_VISUALS = 18
+PINTEREST_ENABLED = os.getenv("PINTEREST_ENABLED", "true").lower() not in {"0", "false", "no", "off"}
 STOP = set("about after again because before could every first from have into more most never only other over really their there these this those through what when where which while with would your that than they them then were will also some many fact facts interesting people thing story stories history video videos footage of the and are was for not you but has had its our their documentary image images clip clips scene scenes".split())
 
 def clean(value):
@@ -101,6 +104,32 @@ def commons_search(query, video=False, limit=10):
         results.append({"url":url,"mime":mime,"width":width,"height":height,"duration":float(info.get("duration") or 0),"title":clean(meta.get("ObjectName",{}).get("value",page.get("title",query))),"artist":clean(meta.get("Artist",{}).get("value","")),"license":clean(meta.get("LicenseShortName",{}).get("value","")),"description":clean(meta.get("ImageDescription",{}).get("value","")),"pageurl":page.get("fullurl",f"https://commons.wikimedia.org/wiki/{quote(page.get('title',''))}"),"source":"Wikimedia Commons"})
     return results
 
+def pinterest_search(query, limit=12):
+    if not PINTEREST_ENABLED:
+        return []
+    try:
+        response = requests.get(PINTEREST_SEARCH, params={"q": query}, timeout=12, headers=UA)
+        response.raise_for_status()
+        text = response.text
+    except Exception as exc:
+        print(f"Pinterest search failed for '{query}': {exc}")
+        return []
+    # Pinterest embeds pin image metadata in the search HTML/serialized page state.
+    urls = re.findall(r"https?://i\\.pinimg\\.com/[^"]+", text)
+    if not urls:
+        urls = re.findall(r"https://i\.pinimg\.com/[^"]+", text)
+    results, seen = [], set()
+    for raw in urls:
+        url = html.unescape(raw).replace("\\u002F", "/").replace("\\/", "/").replace("\\u003D", "=")
+        url = url.split('"')[0].split("\\u0026")[0]
+        if url in seen or not url.lower().endswith(IMAGE_EXTS):
+            continue
+        seen.add(url)
+        results.append({"url":url,"mime":"image/jpeg","width":0,"height":0,"duration":0,"title":query,"artist":"Pinterest","license":"Unknown - verify before commercial use","description":query,"pageurl":"https://www.pinterest.com/search/pins/?q=" + quote(query),"source":"Pinterest"})
+        if len(results) >= limit:
+            break
+    return results
+
 def score(candidate, terms, scene, prefer_video=False):
     title, desc = candidate["title"].lower(), candidate["description"].lower()
     words = set(re.findall(r"[a-z]{4,}", scene.lower())) - STOP
@@ -114,6 +143,7 @@ def score(candidate, terms, scene, prefer_video=False):
     if pixels >= 1920 * 1080: value += 12
     elif pixels >= 1280 * 720: value += 6
     if candidate["license"]: value += 3
+    if candidate["source"] == "Pinterest": value += 5
     return value
 
 def download(candidate, index):
@@ -144,7 +174,6 @@ def discovery_queries(terms, video=False):
     context = "video footage" if video else "photo"
     core = terms[:6]
     queries = [" ".join(core+[context]), " ".join(terms[:5]+[context]), " ".join(terms[:4]+[context])]
-    # Pinterest-like discovery: vary the visual angle instead of repeating one exact query.
     for suffix in (["close up","detail"], ["wide shot","landscape"], ["diagram","illustration"] if not video else ["documentary","archive"]):
         queries.append(" ".join(terms[:4]+suffix))
     return list(dict.fromkeys(queries))
@@ -152,8 +181,10 @@ def discovery_queries(terms, video=False):
 def search_candidates(scene, terms, video):
     candidates, seen = [], set()
     for query in discovery_queries(terms, video):
-        found = commons_search(query, video=video, limit=8)
-        if not video: found = openverse_search(query, limit=10) + found
+        if not video:
+            found = pinterest_search(query, limit=8) + openverse_search(query, limit=10) + commons_search(query, video=False, limit=8)
+        else:
+            found = commons_search(query, video=True, limit=8)
         for candidate in found:
             if candidate["url"] not in seen:
                 seen.add(candidate["url"]); candidates.append(candidate)
@@ -169,7 +200,6 @@ def main():
     scenes=scene_sentences(script); selected=[]; used=set(); sources=[]
     for scene_index, scene in enumerate(scenes,1):
         terms=terms_for_scene(scene); chosen=None
-        # Still images first: normal videos now intentionally contain real pictures whenever available.
         for candidate in search_candidates(scene,terms,False):
             if candidate["url"] not in used and score(candidate,terms,scene) >= 18:
                 chosen=candidate; break
@@ -198,8 +228,8 @@ def main():
             sources.append({"scene":scene_index,"scene_text":scene,"local_file":str(path.relative_to(ROOT)),"title":"Graphical local fallback","artist":"AI Video Automation","license":"Generated locally","pageurl":"","url":"","mime":"image/jpeg","score":0})
         selected.append(path)
     if not selected: selected.append(make_local_fallback(0,scenes[0] if scenes else "Interesting fact"))
-    (VISUALS/"sources.txt").write_text("\n".join(f"Scene {s['scene']} | score={s['score']} | {s['local_file']} | {s['title']} | {s['artist']} | {s['license']} | {s['pageurl']} | {s['url']}" for s in sources),encoding="utf-8")
-    videos=sum(s["mime"] in VIDEO_MIMES for s in sources); fallbacks=sum("fallback" in s["title"].lower() for s in sources)
-    print(f"VISUAL_REPORT videos={videos} images={len(sources)-videos-fallbacks} fallbacks={fallbacks} total={len(sources)} scenes={len(scenes)}")
+    (VISUALS/"sources.txt").write_text("\n".join(f"Scene {s['scene']} | source={s.get('source','local')} | score={s['score']} | {s['local_file']} | {s['title']} | {s['artist']} | {s['license']} | {s['pageurl']} | {s['url']}" for s in sources),encoding="utf-8")
+    videos=sum(s["mime"] in VIDEO_MIMES for s in sources); fallbacks=sum("fallback" in s["title"].lower() for s in sources); pinterest=sum(s.get("source")=="Pinterest" for s in sources)
+    print(f"VISUAL_REPORT videos={videos} images={len(sources)-videos-fallbacks} pinterest={pinterest} fallbacks={fallbacks} total={len(sources)} scenes={len(scenes)}")
 
 if __name__ == "__main__": main()
