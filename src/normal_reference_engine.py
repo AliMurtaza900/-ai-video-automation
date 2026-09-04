@@ -1,15 +1,14 @@
 """Reference-driven character asset and continuity manifest for normal videos.
 
-Zero-cost by default: it does not require a paid image API. It turns the
-character bible into deterministic reference specifications, discovers any
-existing local reference assets, creates stable hashes/metadata, and emits
-provider-neutral prompts that optional image/I2V backends can consume.
+Zero-cost by default: no paid image API is required. The engine turns the
+character bible into deterministic reference specifications, discovers local
+reference assets, fingerprints them, and emits provider-neutral metadata that
+optional image/I2V backends can consume.
 """
 from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from pathlib import Path
 
@@ -44,9 +43,9 @@ def reference_prompt(character: dict) -> str:
     wardrobe = character.get("wardrobe_lock", {})
     return (
         f"Create a clean canonical character reference sheet for {character.get('name', 'the character')}. "
-        f"Age: {identity.get('age', 'consistent').} Face: {identity.get('face', 'stable').} "
-        f"Eyes: {identity.get('eyes', 'stable').} Hair: {identity.get('hair', 'stable').} "
-        f"Body: {identity.get('body', 'stable proportions').} Signature features: "
+        f"Age: {identity.get('age', 'consistent')}. Face: {identity.get('face', 'stable')}. "
+        f"Eyes: {identity.get('eyes', 'stable')}. Hair: {identity.get('hair', 'stable')}. "
+        f"Body: {identity.get('body', 'stable proportions')}. Signature features: "
         f"{', '.join(map(str, identity.get('signature_features', []))) or 'none'}. "
         f"Wardrobe: {wardrobe.get('primary', 'signature outfit')}; colors: "
         f"{', '.join(map(str, wardrobe.get('colors', []))) or 'unchanged'}; accessories: "
@@ -62,9 +61,7 @@ def build(bible: dict, plan: dict) -> dict:
         name = str(character.get("name", "Character"))
         directory = ASSET_ROOT / safe_name(name)
         files = image_files(directory) if directory.exists() else []
-        refs = []
-        for path in files:
-            refs.append({"path": str(path.relative_to(ROOT)), "sha256": sha256(path), "bytes": path.stat().st_size})
+        refs = [{"path": str(path.relative_to(ROOT)), "sha256": sha256(path), "bytes": path.stat().st_size} for path in files]
         result["characters"].append({
             "id": character.get("id"),
             "name": name,
@@ -86,6 +83,7 @@ def build(bible: dict, plan: dict) -> dict:
             "reference_character": matched["name"] if matched else None,
             "reference_images": matched["reference_images"] if matched else [],
             "reference_required": bool(matched),
+            "conditioning_mode": "image_reference" if matched and matched["reference_images"] else "prompt_only",
             "continuity_instruction": "Use the canonical reference whenever the selected generation backend supports image conditioning; otherwise preserve the canonical prompt and mark the scene as prompt-only.",
         })
     result["scenes"] = scene_refs
@@ -104,5 +102,4 @@ def main() -> None:
     print(f"Reference engine ready: {available}/{len(manifest['characters'])} character reference set(s) available")
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
