@@ -21,14 +21,13 @@ class ReferenceEngineTests(unittest.TestCase):
         self.assertEqual(result["characters"][0]["reference_status"], "not_provided")
         self.assertEqual(result["scenes"][0]["conditioning_mode"], "prompt_only")
 
-    def test_local_reference_is_fingerprinted(self):
+    def test_hash_is_deterministic(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            ref_dir = root / "milo"
-            ref_dir.mkdir()
-            ref = ref_dir / "ref.png"
+            ref = Path(tmp) / "ref.png"
             ref.write_bytes(b"reference")
-            self.assertEqual(sha256(ref), "e8b6a9c3f8f0e2f5d8d3a6f2a6a3b9f8b7c5c1f2e6e2f6e3d0e5b0c2d6c4a2f4") if False else self.assertTrue(sha256(ref))
+            first = sha256(ref)
+            self.assertEqual(first, sha256(ref))
+            self.assertEqual(len(first), 64)
 
 
 if __name__ == "__main__":
