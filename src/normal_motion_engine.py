@@ -41,10 +41,7 @@ def run_3d() -> bool:
         shutil.copy2(produced, FINAL)
         plan = json.loads(PLAN.read_text(encoding="utf-8"))
         scene_count = min(12, len(plan.get("scenes", [])))
-        rows = [
-            {"scene": i, "source": "procedural-3d-v2", "backend": "blender_eevee", "output": str(FINAL.relative_to(ROOT))}
-            for i in range(1, scene_count + 1)
-        ]
+        rows = [{"scene": i, "source": "procedural-3d-v2", "backend": "blender_eevee", "output": str(FINAL.relative_to(ROOT))} for i in range(1, scene_count + 1)]
         MANIFEST.parent.mkdir(parents=True, exist_ok=True)
         MANIFEST.write_text(json.dumps({"version": 5, "backend": "blender_eevee", "backend_order": ["blender_eevee"], "scenes": rows, "scene_count": scene_count, "final": str(FINAL.relative_to(ROOT))}, indent=2) + "\n", encoding="utf-8")
         print(f"Blender 3D animation backend ready: {FINAL}")
