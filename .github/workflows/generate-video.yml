@@ -17,6 +17,7 @@ permissions:
 
 env:
   PYTHONUNBUFFERED: '1'
+  PYTHONPATH: ${{ github.workspace }}
 
 jobs:
   generate:
@@ -34,35 +35,61 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
       - name: Validate pipeline code
         run: |
+          set -euo pipefail
           python -m compileall -q src
           python -m unittest discover -s tests -p 'test_*.py' -v
+          python - <<'PY'
+          import importlib
+          modules = [
+              'src.main',
+              'src.fetch_visuals',
+              'src.normal_production_engine',
+              'src.normal_quality_gate',
+              'src.normal_character_consistency',
+              'src.normal_reference_engine',
+              'src.normal_scene_director',
+              'src.normal_visual_planner',
+              'src.normal_visual_critic',
+              'src.normal_visual_repair',
+              'src.add_voice',
+              'src.normal_motion_engine',
+              'src.normal_cinematic_renderer',
+              'src.normal_finalizer',
+              'src.youtube_upload',
+          ]
+          for name in modules:
+              importlib.import_module(name)
+              print(f'import ok: {name}')
+          PY
+          ffmpeg -version >/dev/null
+          ffprobe -version >/dev/null
       - name: Check YouTube OAuth refresh token
         env:
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-        run: python src/youtube_upload.py --auth-check
+        run: python -m src.youtube_upload --auth-check
       - name: Generate AI script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           VIDEO_GOAL: "Create a high-retention, monetization-safe YouTube Short about a genuinely surprising fact"
-        run: python src/main.py
+        run: python -m src.main
       - name: Build AI director plan
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python src/normal_production_engine.py
+        run: python -m src.normal_production_engine
       - name: Quality gate director plan
-        run: python src/normal_quality_gate.py
+        run: python -m src.normal_quality_gate
       - name: Build character consistency bible
-        run: python src/normal_character_consistency.py
+        run: python -m src.normal_character_consistency
       - name: Build character reference manifest
-        run: python src/normal_reference_engine.py
+        run: python -m src.normal_reference_engine
       - name: Build shot-level acting and cinematic direction
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python src/normal_scene_director.py
+        run: python -m src.normal_scene_director
       - name: Build cinematic visual plan
-        run: python src/normal_visual_planner.py
+        run: python -m src.normal_visual_planner
       - name: Persist topic memory
         run: |
           git config user.name "ai-video-automation[bot]"
@@ -70,23 +97,23 @@ jobs:
           git add data/topic_history.json
           if git diff --cached --quiet; then echo "Topic memory unchanged"; else git commit -m "Update topic memory [skip ci]"; git pull --rebase origin main; git push origin HEAD:main; fi
       - name: Fetch resilient visuals
-        run: python src/fetch_visuals.py
+        run: python -m src.fetch_visuals
       - name: AI visual critic
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python src/normal_visual_critic.py
+        run: python -m src.normal_visual_critic
       - name: Automatically repair weak visuals
-        run: python src/normal_visual_repair.py
+        run: python -m src.normal_visual_repair
       - name: Re-check repaired visuals
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python src/normal_visual_critic.py
+        run: python -m src.normal_visual_critic
       - name: Generate AI voice and timings
-        run: python src/add_voice.py
+        run: python -m src.add_voice
       - name: Generate real-motion cinematic scene layer
-        run: python src/normal_motion_engine.py
+        run: python -m src.normal_motion_engine
       - name: Add captions and voice to cinematic layer
-        run: python src/normal_finalizer.py
+        run: python -m src.normal_finalizer
       - name: Validate final video
         run: |
           set -euo pipefail
@@ -102,8 +129,28 @@ jobs:
           test -s output/normal_production/character_references.json
           test -s output/normal_production/scene_shot_plan.json
           test -s output/normal_production/motion_manifest.json
-          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of csv=p=0 output/final-video.mp4
-          ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate -of csv=p=0 output/final-video.mp4
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          manifest = Path('output/normal_production/motion_manifest.json')
+          data = json.loads(manifest.read_text(encoding='utf-8'))
+          scenes = data.get('scenes') or []
+          if not scenes:
+              raise SystemExit('Motion manifest contains no scenes')
+          for row in scenes:
+              output = Path(row.get('output', ''))
+              if not output.exists() or output.stat().st_size == 0:
+                  raise SystemExit(f'Missing motion clip: {output}')
+          print(f'Motion manifest validation passed: {len(scenes)} scenes')
+          PY
+          video_info=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of csv=p=0 output/final-video.mp4)
+          audio_info=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate,channels -of csv=p=0 output/final-video.mp4)
+          echo "Video: $video_info"
+          echo "Audio: $audio_info"
+          test "$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 output/final-video.mp4)" = "1080"
+          test "$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 output/final-video.mp4)" = "1920"
+          test "$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 output/final-video.mp4)" = "h264"
+          test "$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 output/final-video.mp4)" = "aac"
           duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/final-video.mp4)
           python - "$duration" <<'PY'
           import sys
@@ -122,7 +169,7 @@ jobs:
           YOUTUBE_MADE_FOR_KIDS: "false"
           YOUTUBE_CATEGORY_ID: "27"
           YOUTUBE_DESCRIPTION: "A short, surprising fact narrated and edited automatically for YouTube Shorts. Educational content for general audiences."
-        run: python src/youtube_upload.py
+        run: python -m src.youtube_upload
       - name: Upload diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
