@@ -43,6 +43,13 @@ jobs:
           python -m compileall -q src
           python -m unittest discover -s tests -p 'test_*.py' -v
 
+      - name: Check YouTube OAuth refresh token
+        env:
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+        run: python src/youtube_upload.py --auth-check
+
       - name: Generate AI script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
