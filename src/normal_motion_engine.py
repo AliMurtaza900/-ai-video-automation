@@ -30,17 +30,7 @@ def run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True, cwd=ROOT)
 
 
-def duration(path: Path) -> float:
-    result = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-        capture_output=True, text=True, check=True,
-    )
-    return float(result.stdout.strip())
-
-
 def normalize_video(source: Path, target: Path, seconds: float = 4.0) -> None:
-    """Normalize a real source clip to the project's vertical cinematic format."""
     target.parent.mkdir(parents=True, exist_ok=True)
     run([
         "ffmpeg", "-y", "-stream_loop", "-1", "-i", str(source),
@@ -52,12 +42,7 @@ def normalize_video(source: Path, target: Path, seconds: float = 4.0) -> None:
 
 
 def run_external_i2v(image: Path, target: Path, scene: dict, index: int) -> bool:
-    """Run an optional local/free I2V backend without hard-coding a provider.
-
-    MOTION_ENGINE_COMMAND may contain {input}, {output}, {prompt}, {scene}.
-    This keeps the GitHub runner fully free/fallback-safe while allowing a
-    locally hosted Wan/Hunyuan/ComfyUI worker to plug into the same pipeline.
-    """
+    """Run an optional local/free I2V backend; failure falls back automatically."""
     template = os.getenv("MOTION_ENGINE_COMMAND", "").strip()
     if not template:
         return False
@@ -67,10 +52,15 @@ def run_external_i2v(image: Path, target: Path, scene: dict, index: int) -> bool
         "prompt": str(scene.get("visual_prompt", scene.get("action", "cinematic motion"))),
         "scene": str(index),
     }
-    command = template.format(**values)
-    print(f"Running optional I2V backend for scene {index}: {command}")
-    subprocess.run(shlex.split(command), check=True, cwd=ROOT)
-    return target.exists() and target.stat().st_size > 0
+    try:
+        command = template.format(**values)
+        print(f"Running optional I2V backend for scene {index}: {command}")
+        subprocess.run(shlex.split(command), check=True, cwd=ROOT)
+        return target.exists() and target.stat().st_size > 0
+    except Exception as exc:
+        print(f"Optional I2V backend failed for scene {index}: {exc}; using procedural fallback")
+        target.unlink(missing_ok=True)
+        return False
 
 
 def concat(clips: list[Path]) -> None:
@@ -100,7 +90,6 @@ def main() -> None:
     images = [p for p in media if p.suffix.lower() in IMAGE_EXTS]
     videos = [p for p in media if p.suffix.lower() in VIDEO_EXTS]
 
-    # Match numbered assets first; otherwise use stable sorted order.
     clips: list[Path] = []
     records = []
     for i, scene in enumerate(scenes, 1):
@@ -109,14 +98,12 @@ def main() -> None:
         source = numbered[0] if numbered else (videos[i - 1] if i <= len(videos) else (images[(i - 1) % len(images)] if images else media[0]))
 
         if source.suffix.lower() in VIDEO_EXTS:
-            seconds = min(8.0, max(1.8, 4.0))
-            normalize_video(source, target, seconds)
+            normalize_video(source, target, 4.0)
             backend = "free_source_video"
         elif run_external_i2v(source, target, scene, i):
             backend = "external_i2v"
         else:
-            # The existing renderer is the guaranteed zero-cost fallback.
-            from normal_cinematic_renderer import render_scene, scene_seconds, fit_image
+            from normal_cinematic_renderer import render_scene, scene_seconds
             seconds = scene_seconds(OUTPUT / "voice.mp3", len(scenes))
             render_scene(source, target, scene, i, seconds)
             backend = "procedural_fallback"
@@ -126,7 +113,11 @@ def main() -> None:
         print(f"Motion scene {i}: {backend} <- {source.name}")
 
     concat(clips)
-    report = {"backend_order": ["free_source_video", "external_i2v", "procedural_fallback"], "scenes": records, "final": str(FINAL.relative_to(ROOT))}
+    report = {
+        "backend_order": ["free_source_video", "external_i2v", "procedural_fallback"],
+        "scenes": records,
+        "final": str(FINAL.relative_to(ROOT)),
+    }
     MANIFEST.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"Motion engine ready: {FINAL}")
 
