@@ -75,8 +75,8 @@ jobs:
         run: python src/normal_visual_critic.py
       - name: Generate AI voice and timings
         run: python src/add_voice.py
-      - name: Render animated cinematic normal-video layer
-        run: python src/normal_cinematic_renderer.py
+      - name: Generate real-motion cinematic scene layer
+        run: python src/normal_motion_engine.py
       - name: Add captions and voice to cinematic layer
         run: python src/normal_finalizer.py
       - name: Validate final video
@@ -89,6 +89,7 @@ jobs:
           test -s output/normal_production/visual_queries.json
           test -s output/normal_production/quality_report.json
           test -s output/normal_production/visual_critic_report.json
+          test -s output/normal_production/motion_manifest.json
           ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,r_frame_rate -of csv=p=0 output/final-video.mp4
           ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate -of csv=p=0 output/final-video.mp4
           duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/final-video.mp4)
