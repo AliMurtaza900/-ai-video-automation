@@ -44,7 +44,7 @@ jobs:
           fi
           kaggle --version
           kaggle kernels list --mine --page-size 1 >/dev/null
-          KAGGLE_OWNER="$(python - <<'PY'
+          KAGGLE_OWNER="$(python - <<'PY' | tail -n 1
           import kagglehub
           info = kagglehub.whoami()
           username = info.get('username') if isinstance(info, dict) else None
@@ -53,6 +53,7 @@ jobs:
           print(username)
           PY
           )"
+          test -n "$KAGGLE_OWNER"
           echo "Authenticated Kaggle owner: $KAGGLE_OWNER"
           echo "owner=$KAGGLE_OWNER" >> "$GITHUB_OUTPUT"
 
