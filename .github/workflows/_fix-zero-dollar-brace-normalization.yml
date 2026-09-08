@@ -1,0 +1,57 @@
+name: One-time normalize zero-dollar 3D f-string braces
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Normalize escaped braces and run regression test
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/zero_dollar_3d_engine_v2.py')
+          s = p.read_text(encoding='utf-8')
+
+          s = s.replace("f'ENV_{{{{idx:02d}}}}_{{{{theme}}}}'", "f'ENV_{{idx:02d}}_{{theme}}'", 1)
+          s = s.replace("parts={{{{'root':root", "parts={{'root':root", 1)
+          s = s.replace("'armR':None}}}}", "'armR':None}}", 1)
+          s = s.replace("colors={{{{'ocean'", "colors={{'ocean'", 1)
+          s = s.replace("'meadow':(.025,.07,.035,1)}}}}", "'meadow':(.025,.07,.035,1)}}", 1)
+
+          p.write_text(s, encoding='utf-8')
+          print('BRACES_NORMALIZED')
+          PY
+
+          python -m py_compile src/zero_dollar_3d_engine_v2.py
+          PYTHONPATH=src python - <<'PY'
+          from zero_dollar_3d_engine_v2 import make_script
+          generated = make_script([{'action': 'test animation', 'emotion': 'happy'}], 12, 540, 960, 'frame_#####')
+          compile(generated, '<generated-blender-script>', 'exec')
+          assert "c=new_collection(f'ENV_{idx:02d}_{theme}')" in generated
+          assert "parts={'root':root" in generated
+          assert "colors={'ocean'" in generated
+          print('GENERATED_SCRIPT_DYNAMIC_BRACES_REGRESSION_TEST_PASSED')
+          PY
+
+      - name: Commit fix
+        shell: bash
+        run: |
+          if git diff --quiet -- src/zero_dollar_3d_engine_v2.py; then
+            echo 'No source change needed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/zero_dollar_3d_engine_v2.py
+          git commit -m 'Normalize zero-dollar 3D f-string brace escaping'
+          git push
