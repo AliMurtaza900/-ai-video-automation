@@ -24,7 +24,6 @@ def sha256_file(path: Path) -> str:
 
 
 def load_verified_upload_record(record_path: Path, expected_hash: str) -> dict:
-    """Return a valid upload record only when it belongs to this exact video."""
     try:
         data = json.loads(record_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -40,7 +39,6 @@ def load_verified_upload_record(record_path: Path, expected_hash: str) -> dict:
 
 
 def run(command: list[str]) -> None:
-    """Run a pipeline step and keep bridge stdout machine-readable."""
     env = os.environ.copy()
     log_dir = WORKSPACE / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -57,9 +55,12 @@ def main() -> int:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     os.environ["VIDEO_GOAL"] = GOAL
 
-    # Never delete youtube_upload.json: the uploader uses its matching SHA-256
-    # record to make retries idempotent. All other transient outputs are rebuilt.
-    for path in (OUTPUT / "final-video.mp4", OUTPUT / "test-video.mp4", OUTPUT / "voice.mp3", OUTPUT / "caption_timing.txt"):
+    # Keep the upload record so retries remain idempotent; rebuild only transient outputs.
+    for path in (
+        OUTPUT / "final-video.mp4", OUTPUT / "test-video.mp4", OUTPUT / "voice.mp3",
+        OUTPUT / "caption_timing.txt", OUTPUT / "video_base.mp4", OUTPUT / "video_captioned.mp4",
+        OUTPUT / "captions.srt",
+    ):
         path.unlink(missing_ok=True)
 
     python = sys.executable
@@ -68,17 +69,12 @@ def main() -> int:
     run([python, "src/add_voice.py"])
     run([python, "src/render_video.py"])
 
-    rendered = OUTPUT / "test-video.mp4"
-    voice = OUTPUT / "voice.mp3"
     final = OUTPUT / "final-video.mp4"
-    if not rendered.is_file() or rendered.stat().st_size == 0:
-        raise RuntimeError("render stage did not create output/test-video.mp4")
+    voice = OUTPUT / "voice.mp3"
+    if not final.is_file() or final.stat().st_size == 0:
+        raise RuntimeError("render stage did not create output/final-video.mp4")
     if not voice.is_file() or voice.stat().st_size == 0:
         raise RuntimeError("voice stage did not create output/voice.mp3")
-
-    run(["ffmpeg", "-y", "-i", str(rendered), "-i", str(voice), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", str(final)])
-    if not final.is_file() or final.stat().st_size == 0:
-        raise RuntimeError("final video preparation failed")
 
     expected_hash = sha256_file(final)
     os.environ.setdefault("YOUTUBE_TITLE", GOAL[:100])
