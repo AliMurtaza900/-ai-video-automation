@@ -14,31 +14,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Refactor generated Blender script template and validate
+      - name: Escape literal braces in generated Blender f-string
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
           p = Path('src/zero_dollar_3d_engine_v2.py')
           s = p.read_text(encoding='utf-8')
-          replacements = [
-              ("return f'''import bpy, math, json", "return '''import bpy, math, json"),
-              ("SCENES = json.loads({payload!r})", "SCENES = json.loads(__ZERO_DOLLAR_PAYLOAD__)"),
-              ("FPS = {fps}", "FPS = __ZERO_DOLLAR_FPS__"),
-              ("W, H = {width}, {height}", "W, H = __ZERO_DOLLAR_WIDTH__, __ZERO_DOLLAR_HEIGHT__"),
-              ("OUT = {out_pattern!r}", "OUT = __ZERO_DOLLAR_OUT_PATTERN__"),
-              ("main()\n'''", "main()\n'''.replace('__ZERO_DOLLAR_PAYLOAD__', repr(payload))\n    .replace('__ZERO_DOLLAR_FPS__', str(fps))\n    .replace('__ZERO_DOLLAR_WIDTH__', str(width))\n    .replace('__ZERO_DOLLAR_HEIGHT__', str(height))\n    .replace('__ZERO_DOLLAR_OUT_PATTERN__', repr(out_pattern))"),
-          ]
-          changed = False
-          for old, new in replacements:
-              if old in s:
-                  s = s.replace(old, new, 1)
-                  changed = True
-          # Normalize the previous hotfix if it was applied by an earlier attempt.
-          s = s.replace("c=new_collection(f'ENV_{{idx:02d}}_{{theme}}')", "c=new_collection(f'ENV_{idx:02d}_{theme}')", 1)
+
+          old_env = "c=new_collection(f'ENV_{idx:02d}_{theme}')"
+          new_env = "c=new_collection(f'ENV_{{{{idx:02d}}}}_{{{{theme}}}}')"
+          assert old_env in s or new_env in s, 'Expected environment f-string not found'
+          s = s.replace(old_env, new_env, 1)
+
+          old_parts = "parts={'root':root,'mouth':uv('HeroMouth',(0,-.685,2.38),(.15,.025,.055),MOUTH,c),\n           'tail':uv('HeroTail',(.72,.18,1.62),(.55,.20,.30),ORANGE,c),\n           'eyeL':None,'eyeR':None,'pupilL':None,'pupilR':None,'armL':None,'armR':None}"
+          new_parts = "parts={{'root':root,'mouth':uv('HeroMouth',(0,-.685,2.38),(.15,.025,.055),MOUTH,c),\n           'tail':uv('HeroTail',(.72,.18,1.62),(.55,.20,.30),ORANGE,c),\n           'eyeL':None,'eyeR':None,'pupilL':None,'pupilR':None,'armL':None,'armR':None}}"
+          assert old_parts in s, 'Expected parts dictionary not found'
+          s = s.replace(old_parts, new_parts, 1)
+
+          old_colors = "colors={'ocean':(.01,.06,.16,1),'forest':(.015,.06,.02,1),'desert':(.15,.07,.025,1),'snow':(.10,.15,.22,1),'volcano':(.08,.008,.003,1),'space':(.001,.002,.01,1),'city':(.015,.025,.07,1),'meadow':(.025,.07,.035,1)}"
+          new_colors = "colors={{'ocean':(.01,.06,.16,1),'forest':(.015,.06,.02,1),'desert':(.15,.07,.025,1),'snow':(.10,.15,.22,1),'volcano':(.08,.008,.003,1),'space':(.001,.002,.01,1),'city':(.015,.025,.07,1),'meadow':(.025,.07,.035,1)}}"
+          assert old_colors in s, 'Expected colors dictionary not found'
+          s = s.replace(old_colors, new_colors, 1)
+
           p.write_text(s, encoding='utf-8')
-          print('TEMPLATE_REFACTOR_CHANGED' if changed else 'TEMPLATE_REFACTOR_ALREADY_PRESENT')
+          print('IDX_AND_LITERAL_BRACE_FIX_APPLIED')
           PY
+
           python -m py_compile src/zero_dollar_3d_engine_v2.py
           PYTHONPATH=src python - <<'PY'
           from zero_dollar_3d_engine_v2 import make_script
@@ -46,6 +48,7 @@ jobs:
           compile(generated, '<generated-blender-script>', 'exec')
           assert "c=new_collection(f'ENV_{idx:02d}_{theme}')" in generated
           assert "parts={'root':root" in generated
+          assert "colors={'ocean'" in generated
           print('GENERATED_SCRIPT_BRACES_AND_IDX_REGRESSION_TEST_PASSED')
           PY
 
@@ -59,5 +62,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src/zero_dollar_3d_engine_v2.py
-          git commit -m 'Fix zero-dollar 3D script template interpolation'
+          git commit -m 'Fix zero-dollar 3D generated script f-string braces'
           git push
