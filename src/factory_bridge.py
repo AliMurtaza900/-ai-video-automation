@@ -55,7 +55,6 @@ def main() -> int:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     os.environ["VIDEO_GOAL"] = GOAL
 
-    # Keep the upload record so retries remain idempotent; rebuild only transient outputs.
     for path in (
         OUTPUT / "final-video.mp4", OUTPUT / "test-video.mp4", OUTPUT / "voice.mp3",
         OUTPUT / "caption_timing.txt", OUTPUT / "video_base.mp4", OUTPUT / "video_captioned.mp4",
@@ -67,8 +66,6 @@ def main() -> int:
     run([python, "src/main.py"])
     run([python, "src/fetch_visuals.py"])
 
-    # Optional local AI video generation. It is deliberately opt-in so normal
-    # GitHub/CPU runs keep the existing free visual fallback.
     if os.environ.get("WAN_ENABLED", "false").lower() in {"1", "true", "yes", "on"}:
         run([python, "src/wan_video.py"])
 
@@ -84,18 +81,30 @@ def main() -> int:
 
     expected_hash = sha256_file(final)
     os.environ.setdefault("YOUTUBE_TITLE", GOAL[:100])
-    run([python, "src/youtube_upload.py"])
-
-    data = load_verified_upload_record(UPLOAD_RECORD, expected_hash)
-    result = {
-        "status": "completed",
-        "video": str(final.resolve()),
-        "title": data.get("title") or os.environ["YOUTUBE_TITLE"],
-        "description": os.environ.get("YOUTUBE_DESCRIPTION", ""),
-        "video_id": data["youtube_id"],
-        "sha256": expected_hash,
-        "video_engine": "wan2.2-ti2v-5b" if os.environ.get("WAN_ENABLED", "false").lower() in {"1", "true", "yes", "on"} else "existing",
-    }
+    skip_upload = os.environ.get("SKIP_YOUTUBE_UPLOAD", "false").lower() in {"1", "true", "yes", "on"}
+    if skip_upload:
+        result = {
+            "status": "rendered",
+            "video": str(final.resolve()),
+            "title": os.environ["YOUTUBE_TITLE"],
+            "description": os.environ.get("YOUTUBE_DESCRIPTION", ""),
+            "sha256": expected_hash,
+            "video_engine": "wan2.2-ti2v-5b" if os.environ.get("WAN_ENABLED", "false").lower() in {"1", "true", "yes", "on"} else "existing",
+            "youtube_uploaded": False,
+        }
+    else:
+        run([python, "src/youtube_upload.py"])
+        data = load_verified_upload_record(UPLOAD_RECORD, expected_hash)
+        result = {
+            "status": "completed",
+            "video": str(final.resolve()),
+            "title": data.get("title") or os.environ["YOUTUBE_TITLE"],
+            "description": os.environ.get("YOUTUBE_DESCRIPTION", ""),
+            "video_id": data["youtube_id"],
+            "sha256": expected_hash,
+            "video_engine": "wan2.2-ti2v-5b" if os.environ.get("WAN_ENABLED", "false").lower() in {"1", "true", "yes", "on"} else "existing",
+            "youtube_uploaded": True,
+        }
     (WORKSPACE / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result))
     return 0
