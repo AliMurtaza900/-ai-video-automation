@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -14,11 +15,24 @@ REPO_DIR = WORK / "ai-video-automation"
 WAN_DIR = WORK / "Wan2GP"
 EMBEDDED_CONFIG = None
 WAN2GP_COMMIT = "362c3467a70e1136ceb52eec95907205a8f88543"
+LOG = WORK / "kaggle_preflight.log"
+
+
+def log(message: str) -> None:
+    print(message, flush=True)
+    with LOG.open("a", encoding="utf-8") as fh:
+        fh.write(message + "\n")
 
 
 def run(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
-    print("$", " ".join(cmd), flush=True)
-    subprocess.run(cmd, cwd=str(cwd) if cwd else None, env=env, check=True)
+    log("$ " + " ".join(cmd))
+    result = subprocess.run(cmd, cwd=str(cwd) if cwd else None, env=env, text=True, capture_output=True)
+    if result.stdout:
+        log(result.stdout.rstrip())
+    if result.stderr:
+        log(result.stderr.rstrip())
+    if result.returncode:
+        raise RuntimeError(f"Command failed with exit code {result.returncode}: {' '.join(cmd)}")
 
 
 def find_config() -> Path:
@@ -37,23 +51,33 @@ def find_config() -> Path:
 
 
 def check_internet() -> None:
-    """Fail fast with the real Kaggle networking problem instead of waiting minutes."""
-    import socket
-
-    for host in ("github.com", "huggingface.co"):
+    """Prove that this exact Kaggle worker can reach the services it needs."""
+    log("=== KAGGLE NETWORK PREFLIGHT ===")
+    log(f"HOSTNAME={socket.gethostname()}")
+    log(f"KAGGLE_URL_BASE={os.environ.get('KAGGLE_URL_BASE', 'unset')}")
+    log(f"HTTP_PROXY={os.environ.get('HTTP_PROXY', 'unset')}")
+    log(f"HTTPS_PROXY={os.environ.get('HTTPS_PROXY', 'unset')}")
+    for host in ("github.com", "raw.githubusercontent.com", "pypi.org", "huggingface.co"):
         try:
-            socket.gethostbyname(host)
-            print(f"NETWORK_OK {host}", flush=True)
+            ip = socket.gethostbyname(host)
+            log(f"DNS_OK {host} -> {ip}")
         except OSError as exc:
             raise RuntimeError(
-                "Kaggle kernel has no working outbound DNS/internet. "
-                "This kernel must be created in the Kaggle UI with Internet enabled; "
-                "API-pushed kernels can ignore enable_internet metadata. "
-                f"DNS check failed for {host}: {exc}"
+                f"KAGGLE_INTERNET_BLOCKED: DNS cannot resolve {host}: {exc}. "
+                "The Kaggle kernel's Internet permission is OFF at runtime. "
+                "Enable Internet for this Kaggle kernel/account, then rerun. "
+                "No Python code can repair a disabled Kaggle network sandbox."
             ) from exc
+    for url in ("https://github.com", "https://pypi.org", "https://huggingface.co"):
+        try:
+            run([sys.executable, "-c", f"import urllib.request; r=urllib.request.urlopen({url!r}, timeout=15); print(r.status)"])
+        except Exception as exc:
+            raise RuntimeError(f"KAGGLE_INTERNET_BLOCKED: HTTPS request failed for {url}: {exc}") from exc
+    log("KAGGLE_NETWORK_OK")
 
 
 def main() -> None:
+    LOG.unlink(missing_ok=True)
     config_path = find_config()
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
     repo = cfg["repo"]
@@ -61,17 +85,15 @@ def main() -> None:
     goal = cfg["goal"]
     max_shots = str(cfg.get("max_shots", 2))
 
-    print(f"Using config: {config_path}", flush=True)
-    print("Python:", sys.version, flush=True)
+    log(f"Using config: {config_path}")
+    log(f"Python: {sys.version}")
 
     nvidia_smi = shutil.which("nvidia-smi")
     if nvidia_smi:
         run([nvidia_smi])
     else:
-        print("nvidia-smi not available; continuing with PyTorch CUDA preflight", flush=True)
+        log("nvidia-smi not available; continuing with PyTorch CUDA preflight")
 
-    # Do not run apt-get here. Kaggle GPU kernels are frequently offline at runtime,
-    # and the base image already contains git/ffmpeg for this workflow.
     check_internet()
 
     if REPO_DIR.exists():
@@ -84,10 +106,8 @@ def main() -> None:
         shutil.rmtree(WAN_DIR)
     run(["git", "clone", "--depth", "1", "https://github.com/deepbeepmeep/Wan2GP.git", str(WAN_DIR)])
     run(["git", "checkout", WAN2GP_COMMIT], cwd=WAN_DIR)
-    print(f"Wan2GP pinned to {WAN2GP_COMMIT}", flush=True)
+    log(f"Wan2GP pinned to {WAN2GP_COMMIT}")
 
-    # Preserve Kaggle's CUDA/PyTorch stack. Wan2GP's own requirements are installed
-    # without dependency resolution so pip cannot replace the working CUDA runtime.
     run([sys.executable, "-m", "pip", "install", "-q", "-r", str(REPO_DIR / "requirements.txt")])
     run([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "-r", str(WAN_DIR / "requirements.txt")])
 
@@ -107,32 +127,28 @@ def main() -> None:
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
     })
 
-    run([
-        sys.executable, "-c",
-        "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'available', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')",
-    ], env=env)
+    run([sys.executable, "-c", "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'available', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"], env=env)
+    run([sys.executable, "-c", "import torch; x=torch.randn((256,256), device='cuda'); print('CUDA_SMOKE_OK', x.mean().item())"], env=env)
 
-    subprocess.run([sys.executable, "src/factory_bridge.py"], cwd=str(REPO_DIR), env=env, check=True)
+    run([sys.executable, "src/factory_bridge.py"], cwd=REPO_DIR, env=env)
 
     bundle = WORK / "kaggle_output"
     if bundle.exists():
         shutil.rmtree(bundle)
     bundle.mkdir()
-    for relative in (
-        "output/final-video.mp4",
-        "output/voice.mp3",
-        "output/script.txt",
-        "factory_workspace/result.json",
-        "assets/visuals/sources.txt",
-    ):
+    for relative in ("output/final-video.mp4", "output/voice.mp3", "output/script.txt", "factory_workspace/result.json", "assets/visuals/sources.txt"):
         source = REPO_DIR / relative
         if source.is_file():
             shutil.copy2(source, bundle / Path(relative).name)
     final = bundle / "final-video.mp4"
     if not final.is_file() or final.stat().st_size == 0:
         raise RuntimeError("Kaggle generation completed without final-video.mp4")
-    print("KAGGLE_WAN_SUCCESS", final, final.stat().st_size, flush=True)
+    log(f"KAGGLE_WAN_SUCCESS {final} {final.stat().st_size}")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        log(f"KAGGLE_FATAL: {type(exc).__name__}: {exc}")
+        raise
