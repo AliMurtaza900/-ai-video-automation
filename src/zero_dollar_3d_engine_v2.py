@@ -147,7 +147,7 @@ def tree(c,x,y,s=1.0):
 
 
 def environment(theme, idx):
-    c=new_collection(f'ENV_{idx:02d}_{theme}')
+    c=new_collection(f'ENV_{{{{idx:02d}}}}_{{{{theme}}}}')
     if theme=='ocean':
         cube('SeaFloor',(0,2,-.25),(9,9,.2),WATER,c,.05)
         for x,y,h in [(-4,3,1.5),(-2,6,2.0),(2,5,1.4),(4,2,1.8)]:
@@ -187,9 +187,9 @@ def character():
     belly=uv('HeroBelly',(0,-.46,1.42),(.42,.075,.5),CREAM,c); belly.parent=root
     head=uv('HeroHead',(0,-.02,2.55),(.78,.60,.66),ORANGE,c); head.parent=root
     muzzle=uv('HeroMuzzle',(0,-.60,2.38),(.30,.09,.22),CREAM,c); muzzle.parent=root
-    parts={'root':root,'mouth':uv('HeroMouth',(0,-.685,2.38),(.15,.025,.055),MOUTH,c),
+    parts={{'root':root,'mouth':uv('HeroMouth',(0,-.685,2.38),(.15,.025,.055),MOUTH,c),
            'tail':uv('HeroTail',(.72,.18,1.62),(.55,.20,.30),ORANGE,c),
-           'eyeL':None,'eyeR':None,'pupilL':None,'pupilR':None,'armL':None,'armR':None}
+           'eyeL':None,'eyeR':None,'pupilL':None,'pupilR':None,'armL':None,'armR':None}}
     parts['mouth'].parent=root; parts['tail'].parent=root
     for side,x in [('L',-.27),('R',.27)]:
         e=uv('HeroEye'+side,(x,-.56,2.66),(.19,.075,.22),WHITE,c); e.parent=root; parts['eye'+side]=e
@@ -224,7 +224,7 @@ def lights():
 def set_world(theme):
     w=bpy.context.scene.world or bpy.data.worlds.new('World'); bpy.context.scene.world=w; w.use_nodes=True
     bg=w.node_tree.nodes.get('Background');
-    colors={'ocean':(.01,.06,.16,1),'forest':(.015,.06,.02,1),'desert':(.15,.07,.025,1),'snow':(.10,.15,.22,1),'volcano':(.08,.008,.003,1),'space':(.001,.002,.01,1),'city':(.015,.025,.07,1),'meadow':(.025,.07,.035,1)}
+    colors={{'ocean':(.01,.06,.16,1),'forest':(.015,.06,.02,1),'desert':(.15,.07,.025,1),'snow':(.10,.15,.22,1),'volcano':(.08,.008,.003,1),'space':(.001,.002,.01,1),'city':(.015,.025,.07,1),'meadow':(.025,.07,.035,1)}}
     bg.inputs['Color'].default_value=colors.get(theme,colors['meadow']); bg.inputs['Strength'].default_value=.28
 
 
