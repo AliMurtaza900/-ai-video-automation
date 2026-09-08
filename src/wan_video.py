@@ -24,13 +24,13 @@ def scenes_from_script(script: str) -> list[str]:
         words = part.split()
         if len(words) > 18:
             step = max(9, (len(words) + 1) // 2)
-            scenes.extend(" ".join(words[i:i + step] for i in range(0, len(words), step))
+            scenes.extend(" ".join(words[i:i + step]) for i in range(0, len(words), step))
         else:
             scenes.append(part)
     return scenes[: int(os.getenv("WAN_MAX_SHOTS", "10"))]
 
 
-def command_for(prompt: str) -> list[str]:
+def command_for(prompt: str, save_file: Path) -> list[str]:
     wan_home = Path(os.environ.get("WAN_HOME", "")).expanduser()
     checkpoint = Path(os.environ.get("WAN_CHECKPOINT", str(wan_home / "Wan2.2-TI2V-5B"))).expanduser()
     generate = Path(os.environ.get("WAN_GENERATE", str(wan_home / "generate.py"))).expanduser()
@@ -47,18 +47,12 @@ def command_for(prompt: str) -> list[str]:
         "--offload_model", os.getenv("WAN_OFFLOAD_MODEL", "True"),
         "--convert_model_dtype",
         "--t5_cpu",
+        "--save_file", str(save_file),
         "--prompt", prompt,
     ]
-    if os.getenv("WAN_SEED"):
-        cmd += ["--seed", os.environ["WAN_SEED"]]
+    if os.getenv("WAN_BASE_SEED"):
+        cmd += ["--base_seed", os.environ["WAN_BASE_SEED"]]
     return cmd
-
-
-def newest_mp4(folder: Path, before: set[Path]) -> Path | None:
-    candidates = [p for p in folder.rglob("*.mp4") if p.is_file() and p not in before]
-    if not candidates:
-        candidates = [p for p in folder.rglob("*.mp4") if p.is_file()]
-    return max(candidates, key=lambda p: p.stat().st_mtime) if candidates else None
 
 
 def main() -> int:
@@ -82,7 +76,7 @@ def main() -> int:
 
     work = Path(os.environ.get("WAN_OUTPUT_DIR", str(OUTPUT / "wan-generated"))).expanduser()
     work.mkdir(parents=True, exist_ok=True)
-    generated = 0
+    generated_files: list[Path] = []
 
     for index, scene in enumerate(scenes):
         prompt = (
@@ -92,26 +86,24 @@ def main() -> int:
         )
         shot_dir = work / f"shot_{index:02d}"
         shot_dir.mkdir(parents=True, exist_ok=True)
-        before = set(shot_dir.rglob("*.mp4"))
-        cmd = command_for(prompt)
+        save_file = shot_dir / "wan_output.mp4"
+        save_file.unlink(missing_ok=True)
         print(f"Generating Wan 2.2 shot {index + 1}/{len(scenes)}")
-        subprocess.run(cmd, cwd=str(Path(os.environ["WAN_HOME"]).expanduser()), check=True)
-        source = newest_mp4(shot_dir, before)
-        if source is None:
-            raise RuntimeError(f"Wan 2.2 produced no MP4 for shot {index + 1}")
+        subprocess.run(command_for(prompt, save_file), cwd=str(Path(os.environ["WAN_HOME"]).expanduser()), check=True)
+        if not save_file.is_file() or save_file.stat().st_size < 50000:
+            raise RuntimeError(f"Wan 2.2 produced no valid MP4 for shot {index + 1}")
         target = VISUALS / f"visual_{index:02d}.mp4"
-        shutil.copy2(source, target)
-        generated += 1
+        shutil.copy2(save_file, target)
+        generated_files.append(target)
 
-    files = sorted(VISUALS.glob("visual_*.mp4"))
     (VISUALS / "sources.txt").write_text(
         "\n".join(
             f"Scene {i + 1} | source=Wan2.2 local | local_file={p.relative_to(ROOT)}"
-            for i, p in enumerate(files)
+            for i, p in enumerate(generated_files)
         ) + "\n",
         encoding="utf-8",
     )
-    print(f"WAN_REPORT generated={generated} total={len(scenes)}")
+    print(f"WAN_REPORT generated={len(generated_files)} total={len(scenes)}")
     return 0
 
 
