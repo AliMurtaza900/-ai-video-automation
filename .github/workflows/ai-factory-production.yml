@@ -39,6 +39,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: video
+          fetch-depth: 0
 
       - name: Checkout AI Factory
         uses: actions/checkout@v4
@@ -50,14 +51,42 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
 
       - name: Install video dependencies
         working-directory: video
-        run: python -m pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Verify required credentials are configured
+        run: |
+          set -euo pipefail
+          for name in GEMINI_API_KEY YOUTUBE_REFRESH_TOKEN YOUTUBE_CLIENT_ID YOUTUBE_CLIENT_SECRET; do
+            if [ -z "${!name:-}" ]; then
+              echo "ERROR: GitHub Actions secret $name is missing or empty."
+              exit 1
+            fi
+          done
+          echo "Required production credentials are present."
 
       - name: Verify Factory production modules compile
         working-directory: factory
         run: python -m compileall -q factory
+
+      - name: Verify video modules compile
+        working-directory: video
+        run: python -m compileall -q src
+
+      - name: Run video pipeline contract tests
+        working-directory: video
+        run: |
+          if [ -d tests ]; then
+            python -m unittest discover -s tests -p 'test_*.py' -v
+          else
+            echo "No tests directory; compile validation already completed."
+          fi
 
       - name: Run resumable AI Factory production job
         working-directory: factory
@@ -70,24 +99,48 @@ jobs:
             --workspace "${{ github.workspace }}/video/data/factory-workspaces" \
             --state-dir "${{ github.workspace }}/video/data/factory-jobs"
 
+      - name: Verify final production output
+        if: success()
+        working-directory: video
+        run: |
+          set -euo pipefail
+          test -s output/final-video.mp4
+          test -s output/voice.mp3
+          test -s output/youtube_upload.json
+          ffprobe -v error -select_streams v:0 -show_entries stream=width,height,codec_name \
+            -of default=noprint_wrappers=1 output/final-video.mp4
+          ffprobe -v error -select_streams a:0 -show_entries stream=codec_name \
+            -of default=noprint_wrappers=1 output/final-video.mp4
+          echo "Final video contract verified."
+
       - name: Persist Factory production state in video repository
         if: always()
         run: |
-          set -e
+          set -euo pipefail
           cd video
           git config user.name "ai-factory[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/factory-workspaces data/factory-jobs 2>/dev/null || true
+
+          # Rebase before committing generated state. This avoids creating a
+          # commit and then rebasing that commit into an unstaged/conflicted state.
+          git fetch origin main
+          git rebase origin/main
+          git add -A data/factory-workspaces data/factory-jobs
           if git diff --cached --quiet; then
             echo "No Factory state changes to commit."
             exit 0
           fi
           git commit -m "Persist AI Factory production state"
+
           for attempt in 1 2 3; do
-            if git fetch origin main && git rebase origin/main && git push origin HEAD:main; then
+            if git push origin HEAD:main; then
+              echo "Factory state persisted."
               exit 0
             fi
-            git rebase --abort 2>/dev/null || true
+            git fetch origin main
+            git rebase origin/main
+            git add -A data/factory-workspaces data/factory-jobs
             sleep $((attempt * 5))
           done
           echo "WARNING: Could not persist Factory state to video repository."
+          exit 0
