@@ -24,6 +24,7 @@ jobs:
         run: python -m pip install --upgrade "kaggle>=1.7.4" kagglehub
 
       - name: Configure Kaggle authentication
+        id: kaggle-auth
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
@@ -53,10 +54,11 @@ jobs:
           PY
           )"
           echo "Authenticated Kaggle owner: $KAGGLE_OWNER"
-          echo "KAGGLE_OWNER=$KAGGLE_OWNER" >> "$GITHUB_ENV"
+          echo "owner=$KAGGLE_OWNER" >> "$GITHUB_OUTPUT"
 
       - name: Build Kaggle kernel package
         env:
+          KAGGLE_OWNER: ${{ steps.kaggle-auth.outputs.owner }}
           GOAL: ${{ inputs.goal }}
           MAX_SHOTS: ${{ inputs.max_shots }}
           REPO_REF: ${{ github.sha }}
