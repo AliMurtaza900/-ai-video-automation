@@ -11,6 +11,9 @@ WORK = Path("/kaggle/working")
 CONFIG = WORK / "job_config.json"
 REPO_DIR = WORK / "ai-video-automation"
 WAN_DIR = WORK / "Wan2GP"
+# Kaggle script kernels do not reliably package arbitrary sidecar files.
+# The GitHub workflow injects this value directly into the script before push.
+EMBEDDED_CONFIG = None
 
 
 def run(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -27,7 +30,11 @@ def find_config() -> Path:
     for candidate in Path("/kaggle/src").glob("**/job_config.json"):
         if candidate.is_file():
             return candidate
-    raise FileNotFoundError("job_config.json was not packaged into the Kaggle kernel")
+    if EMBEDDED_CONFIG:
+        embedded = WORK / "job_config.embedded.json"
+        embedded.write_text(json.dumps(EMBEDDED_CONFIG), encoding="utf-8")
+        return embedded
+    raise FileNotFoundError("job_config.json was not packaged into the Kaggle kernel and no embedded config exists")
 
 
 def main() -> None:
@@ -53,9 +60,6 @@ def main() -> None:
         shutil.rmtree(WAN_DIR)
     run(["git", "clone", "--depth", "1", "https://github.com/deepbeepmeep/Wan2GP.git", str(WAN_DIR)])
 
-    # Install only the application dependencies. Wan2GP's requirements can
-    # replace Kaggle's preinstalled torch/CUDA stack with incompatible builds,
-    # so install them without dependencies and keep Kaggle's GPU stack intact.
     run([sys.executable, "-m", "pip", "install", "-q", "-r", str(REPO_DIR / "requirements.txt")])
     run([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "-r", str(WAN_DIR / "requirements.txt")])
 
