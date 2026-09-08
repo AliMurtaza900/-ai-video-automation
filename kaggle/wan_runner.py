@@ -13,18 +13,33 @@ REPO_DIR = WORK / "ai-video-automation"
 WAN_DIR = WORK / "Wan2GP"
 
 
-def run(cmd: list[str], cwd: Path | None = None) -> None:
+def run(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
     print("$", " ".join(cmd), flush=True)
-    subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=True)
+    subprocess.run(cmd, cwd=str(cwd) if cwd else None, env=env, check=True)
+
+
+def find_config() -> Path:
+    candidates = [CONFIG, Path("job_config.json"), Path("/kaggle/input/job-config/job_config.json")]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    # Kaggle script kernels package local files next to /kaggle/src/script.py.
+    for candidate in Path("/kaggle/src").glob("**/job_config.json"):
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError("job_config.json was not packaged into the Kaggle kernel")
 
 
 def main() -> None:
-    cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
+    config_path = find_config()
+    print(f"Using config: {config_path}", flush=True)
+    cfg = json.loads(config_path.read_text(encoding="utf-8"))
     repo = cfg["repo"]
     ref = cfg["ref"]
     goal = cfg["goal"]
-    max_shots = str(cfg.get("max_shots", 4))
+    max_shots = str(cfg.get("max_shots", 2))
 
+    run(["nvidia-smi"])
     run(["apt-get", "update", "-qq"])
     run(["apt-get", "install", "-y", "-qq", "ffmpeg", "git"])
 
@@ -38,9 +53,11 @@ def main() -> None:
         shutil.rmtree(WAN_DIR)
     run(["git", "clone", "--depth", "1", "https://github.com/deepbeepmeep/Wan2GP.git", str(WAN_DIR)])
 
-    # Keep Kaggle's CUDA/PyTorch base and install WanGP dependencies around it.
+    # Install only the application dependencies. Wan2GP's requirements can
+    # replace Kaggle's preinstalled torch/CUDA stack with incompatible builds,
+    # so install them without dependencies and keep Kaggle's GPU stack intact.
     run([sys.executable, "-m", "pip", "install", "-q", "-r", str(REPO_DIR / "requirements.txt")])
-    run([sys.executable, "-m", "pip", "install", "-q", "-r", str(WAN_DIR / "requirements.txt")])
+    run([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "-r", str(WAN_DIR / "requirements.txt")])
 
     env = os.environ.copy()
     env.update({
@@ -49,16 +66,18 @@ def main() -> None:
         "WAN_ENGINE": "wangp",
         "WAN_HOME": str(WAN_DIR),
         "WAN_MAX_SHOTS": max_shots,
-        "WAN_SIZE": "704*1280",
-        "WAN_STEPS": "8",
-        "WAN_FRAMES": "49",
+        "WAN_SIZE": "576*1024",
+        "WAN_STEPS": "6",
+        "WAN_FRAMES": "33",
         "WAN_OUTPUT_DIR": str(REPO_DIR / "output" / "wan-generated"),
         "SKIP_YOUTUBE_UPLOAD": "true",
         "PYTHONUNBUFFERED": "1",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
     })
 
-    # Run the user's complete pipeline on Kaggle's GPU, but leave YouTube upload
-    # to GitHub Actions so YouTube credentials never enter the Kaggle notebook.
+    print("Python:", sys.version, flush=True)
+    run([sys.executable, "-c", "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'available', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"], env=env)
+
     subprocess.run([sys.executable, "src/factory_bridge.py"], cwd=str(REPO_DIR), env=env, check=True)
 
     bundle = WORK / "kaggle_output"
@@ -74,8 +93,7 @@ def main() -> None:
     ):
         source = REPO_DIR / relative
         if source.is_file():
-            destination = bundle / Path(relative).name
-            shutil.copy2(source, destination)
+            shutil.copy2(source, bundle / Path(relative).name)
     final = bundle / "final-video.mp4"
     if not final.is_file() or final.stat().st_size == 0:
         raise RuntimeError("Kaggle generation completed without final-video.mp4")
