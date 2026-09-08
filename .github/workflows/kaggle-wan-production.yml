@@ -16,6 +16,10 @@ jobs:
   kaggle-wan:
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    env:
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,10 +28,6 @@ jobs:
         run: python -m pip install --upgrade "kaggle>=1.7.4"
 
       - name: Configure Kaggle authentication
-        env:
-          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
-          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
-          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.kaggle"
@@ -49,10 +49,6 @@ jobs:
 
       - name: Build Kaggle kernel package
         env:
-          # Do not call kagglehub.whoami() and do not pass the owner through
-          # GITHUB_ENV/GITHUB_OUTPUT. The authenticated Kaggle account is the
-          # user's Kaggle account, and this avoids multiline stdout corrupting
-          # GitHub Actions command files.
           KAGGLE_OWNER: alimurtaza904
           GOAL: ${{ inputs.goal }}
           MAX_SHOTS: ${{ inputs.max_shots }}
