@@ -42,20 +42,37 @@ jobs:
             echo "Missing Kaggle credentials. Add KAGGLE_API_TOKEN, or KAGGLE_USERNAME + KAGGLE_KEY, to GitHub Actions secrets."
             exit 1
           fi
+
           kaggle --version
           kaggle kernels list --mine --page-size 1 >/dev/null
-          KAGGLE_OWNER="$(python - <<'PY' | tail -n 1
+
+          # kagglehub.whoami() writes a validation message to stdout before
+          # returning the identity. Capture that stdout internally so ONLY the
+          # username is ever written to GITHUB_OUTPUT. This prevents the GitHub
+          # runner from interpreting the validation message as an env command.
+          KAGGLE_OWNER="$(python - <<'PY'
+          import contextlib
+          import io
           import kagglehub
-          info = kagglehub.whoami()
+
+          captured = io.StringIO()
+          with contextlib.redirect_stdout(captured):
+              info = kagglehub.whoami()
           username = info.get('username') if isinstance(info, dict) else None
           if not username:
               raise SystemExit(f'Could not determine authenticated Kaggle username: {info!r}')
-          print(username)
+          print(str(username).strip())
           PY
           )"
-          test -n "$KAGGLE_OWNER"
+
+          # Validate that the value is exactly one safe, single-line username.
+          KAGGLE_OWNER="$(printf '%s' "$KAGGLE_OWNER" | tr -d '\r' | head -n 1)"
+          if ! printf '%s' "$KAGGLE_OWNER" | grep -Eq '^[A-Za-z0-9._-]+$'; then
+            echo "Kaggle username returned an unexpected format: $KAGGLE_OWNER"
+            exit 1
+          fi
           echo "Authenticated Kaggle owner: $KAGGLE_OWNER"
-          echo "owner=$KAGGLE_OWNER" >> "$GITHUB_OUTPUT"
+          printf 'owner=%s\n' "$KAGGLE_OWNER" >> "$GITHUB_OUTPUT"
 
       - name: Build Kaggle kernel package
         env:
@@ -101,6 +118,7 @@ jobs:
           Path('.kaggle-kernel/kernel-metadata.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
           Path('.kaggle-kernel/kernel_id.txt').write_text(kernel_id, encoding='utf-8')
           print('Kernel id:', kernel_id)
+          print('Metadata:', json.dumps(metadata, indent=2))
           PY
 
       - name: Submit Kaggle GPU job
