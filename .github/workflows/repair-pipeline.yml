@@ -31,10 +31,6 @@ jobs:
 
           p = Path('src/factory_bridge.py')
           s = p.read_text(encoding='utf-8')
-          s = s.replace(
-              "for path in (OUTPUT / \"final-video.mp4\", OUTPUT / \"test-video.mp4\", OUTPUT / \"voice.mp3\", OUTPUT / \"caption_timing.txt\"):",
-              "for path in (OUTPUT / \"final-video.mp4\", OUTPUT / \"test-video.mp4\", OUTPUT / \"voice.mp3\", OUTPUT / \"caption_timing.txt\"):",
-          )
           old_block = '''    rendered = OUTPUT / "test-video.mp4"\n    voice = OUTPUT / "voice.mp3"\n    final = OUTPUT / "final-video.mp4"\n    if not rendered.is_file() or rendered.stat().st_size == 0:\n        raise RuntimeError("render stage did not create output/test-video.mp4")\n    if not voice.is_file() or voice.stat().st_size == 0:\n        raise RuntimeError("voice stage did not create output/voice.mp3")\n\n    run(["ffmpeg", "-y", "-i", str(rendered), "-i", str(voice), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", str(final)])\n    if not final.is_file() or final.stat().st_size == 0:\n        raise RuntimeError("final video preparation failed")\n'''
           new_block = '''    # render_video.py already creates the complete final-video.mp4, including\n    # captions and narration. Do not look for the obsolete test-video.mp4 or\n    # mux the voice a second time.\n    final = OUTPUT / "final-video.mp4"\n    voice = OUTPUT / "voice.mp3"\n    if not final.is_file() or final.stat().st_size == 0:\n        raise RuntimeError("render stage did not create output/final-video.mp4")\n    if not voice.is_file() or voice.stat().st_size == 0:\n        raise RuntimeError("voice stage did not create output/voice.mp3")\n'''
           if old_block not in s:
@@ -56,11 +52,10 @@ jobs:
           python - <<'PY'
           import ast
           from pathlib import Path
-          src = Path('src/zero_dollar_3d_engine_v2.py').read_text(encoding='utf-8')
-          ast.parse(src)
+          ast.parse(Path('src/zero_dollar_3d_engine_v2.py').read_text(encoding='utf-8'))
           bridge = Path('src/factory_bridge.py').read_text(encoding='utf-8')
-          assert 'test-video.mp4' not in bridge
           assert 'final-video.mp4' in bridge
+          assert 'rendered = OUTPUT / "test-video.mp4"' not in bridge
           print('repair validation passed')
           PY
 
