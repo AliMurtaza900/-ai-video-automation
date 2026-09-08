@@ -12,8 +12,6 @@ on:
         required: false
         default: "8"
 
-authorizations: {}
-
 jobs:
   generate:
     runs-on: [self-hosted, wan-gpu]
@@ -44,8 +42,7 @@ jobs:
           python3 -m pip install -r requirements.txt
 
       - name: Install Wan 2.2 and model
-        run: |
-          bash scripts/setup_wan.sh
+        run: bash scripts/setup_wan.sh
 
       - name: Verify GPU
         run: |
@@ -57,9 +54,10 @@ jobs:
           if not torch.cuda.is_available():
               raise SystemExit("CUDA is unavailable on the wan-gpu runner")
           print("GPU:", torch.cuda.get_device_name(0))
-          print("VRAM GB:", round(torch.cuda.get_device_properties(0).total_memory / 1024**3, 1))
-          if torch.cuda.get_device_properties(0).total_memory < 20 * 1024**3:
-              raise SystemExit("Wan TI2V-5B requires a GPU with roughly 24 GB VRAM for the documented 720p configuration")
+          vram = torch.cuda.get_device_properties(0).total_memory
+          print("VRAM GB:", round(vram / 1024**3, 1))
+          if vram < 20 * 1024**3:
+              raise SystemExit("Wan TI2V-5B needs roughly 24 GB VRAM for the documented 720p configuration")
           PY
 
       - name: Run Wan 2.2 production pipeline
