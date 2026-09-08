@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Kaggle CLI
-        run: python -m pip install --upgrade "kaggle>=1.7.4"
+        run: python -m pip install --upgrade "kaggle>=1.7.4" kagglehub
 
       - name: Configure Kaggle authentication
         env:
@@ -43,28 +43,38 @@ jobs:
           fi
           kaggle --version
           kaggle kernels list --mine --page-size 1 >/dev/null
-          echo "Kaggle authentication OK"
+          # IMPORTANT: use the username belonging to the credentials actually
+          # used above. Do not trust a separate KAGGLE_USERNAME secret when an
+          # API token is present; a mismatch causes kernels.get permission 403s.
+          KAGGLE_OWNER="$(python - <<'PY'
+          import kagglehub
+          info = kagglehub.whoami()
+          username = info.get('username') if isinstance(info, dict) else None
+          if not username:
+              raise SystemExit(f'Could not determine authenticated Kaggle username: {info!r}')
+          print(username)
+          PY
+          )"
+          echo "Authenticated Kaggle owner: $KAGGLE_OWNER"
+          echo "KAGGLE_OWNER=$KAGGLE_OWNER" >> "$GITHUB_ENV"
 
       - name: Build Kaggle kernel package
         env:
-          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           GOAL: ${{ inputs.goal }}
           MAX_SHOTS: ${{ inputs.max_shots }}
           REPO_REF: ${{ github.sha }}
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          test -n "$KAGGLE_USERNAME" || (echo "KAGGLE_USERNAME is required for the kernel id"; exit 1)
+          test -n "$KAGGLE_OWNER" || (echo "Authenticated Kaggle owner is empty"; exit 1)
           rm -rf .kaggle-kernel kaggle-output
           mkdir -p .kaggle-kernel
           cp kaggle/wan_runner.py .kaggle-kernel/wan_runner.py
           python - <<'PY'
           import json, os
           from pathlib import Path
-          username = os.environ['KAGGLE_USERNAME'].strip()
+          username = os.environ['KAGGLE_OWNER'].strip()
           run_id = os.environ['RUN_ID'].strip()
-          # Use a fresh kernel slug for every GitHub Actions run. This avoids
-          # Kaggle SaveKernel 409 conflicts when an older kernel is still busy.
           kernel_id = f"{username}/wan-2-2-ai-video-automation-{run_id}"
           title = f"Wan 2 2 AI Video Automation {run_id}"
           Path('.kaggle-kernel/job_config.json').write_text(json.dumps({
@@ -101,7 +111,7 @@ jobs:
         run: |
           set -euo pipefail
           KERNEL="$(cat .kaggle-kernel/kernel_id.txt)"
-          echo "Submitting unique Kaggle kernel: $KERNEL"
+          echo "Submitting exact Kaggle kernel: $KERNEL"
           kaggle kernels push -p .kaggle-kernel
 
       - name: Wait for Kaggle job
