@@ -24,13 +24,13 @@ def scenes_from_script(script: str) -> list[str]:
         words = part.split()
         if len(words) > 18:
             step = max(9, (len(words) + 1) // 2)
-            scenes.extend(" ".join(words[i:i + step]) for i in range(0, len(words), step))
+            scenes.extend(" ".join(words[i:i + step] for i in range(0, len(words), step))
         else:
             scenes.append(part)
     return scenes[: int(os.getenv("WAN_MAX_SHOTS", "10"))]
 
 
-def command_for(prompt: str, shot_dir: Path) -> list[str]:
+def command_for(prompt: str) -> list[str]:
     wan_home = Path(os.environ.get("WAN_HOME", "")).expanduser()
     checkpoint = Path(os.environ.get("WAN_CHECKPOINT", str(wan_home / "Wan2.2-TI2V-5B"))).expanduser()
     generate = Path(os.environ.get("WAN_GENERATE", str(wan_home / "generate.py"))).expanduser()
@@ -39,11 +39,10 @@ def command_for(prompt: str, shot_dir: Path) -> list[str]:
     if not checkpoint.is_dir():
         raise RuntimeError(f"Wan checkpoint not found: {checkpoint}")
 
-    size = os.getenv("WAN_SIZE", "704*1280")
     cmd = [
         os.environ.get("WAN_PYTHON", sys.executable), str(generate),
         "--task", "ti2v-5B",
-        "--size", size,
+        "--size", os.getenv("WAN_SIZE", "704*1280"),
         "--ckpt_dir", str(checkpoint),
         "--offload_model", os.getenv("WAN_OFFLOAD_MODEL", "True"),
         "--convert_model_dtype",
@@ -59,9 +58,7 @@ def newest_mp4(folder: Path, before: set[Path]) -> Path | None:
     candidates = [p for p in folder.rglob("*.mp4") if p.is_file() and p not in before]
     if not candidates:
         candidates = [p for p in folder.rglob("*.mp4") if p.is_file()]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda p: p.stat().st_mtime)
+    return max(candidates, key=lambda p: p.stat().st_mtime) if candidates else None
 
 
 def main() -> int:
@@ -72,14 +69,16 @@ def main() -> int:
     script_path = OUTPUT / "script.txt"
     if not script_path.is_file():
         raise RuntimeError("output/script.txt is missing")
-    script = script_path.read_text(encoding="utf-8").strip()
-    scenes = scenes_from_script(script)
+    scenes = scenes_from_script(script_path.read_text(encoding="utf-8").strip())
     if not scenes:
         raise RuntimeError("No scenes could be created from script")
 
     VISUALS.mkdir(parents=True, exist_ok=True)
-    for p in VISUALS.glob("visual_*.mp4"):
+    # fetch_visuals.py already populated this directory. In Wan mode those
+    # assets are replaced completely so the renderer sees only generated shots.
+    for p in VISUALS.glob("visual_*"):
         p.unlink(missing_ok=True)
+    (VISUALS / "sources.txt").unlink(missing_ok=True)
 
     work = Path(os.environ.get("WAN_OUTPUT_DIR", str(OUTPUT / "wan-generated"))).expanduser()
     work.mkdir(parents=True, exist_ok=True)
@@ -94,7 +93,7 @@ def main() -> int:
         shot_dir = work / f"shot_{index:02d}"
         shot_dir.mkdir(parents=True, exist_ok=True)
         before = set(shot_dir.rglob("*.mp4"))
-        cmd = command_for(prompt, shot_dir)
+        cmd = command_for(prompt)
         print(f"Generating Wan 2.2 shot {index + 1}/{len(scenes)}")
         subprocess.run(cmd, cwd=str(Path(os.environ["WAN_HOME"]).expanduser()), check=True)
         source = newest_mp4(shot_dir, before)
@@ -104,9 +103,12 @@ def main() -> int:
         shutil.copy2(source, target)
         generated += 1
 
-    sources = VISUALS / "sources.txt"
-    sources.write_text(
-        "\n".join(f"Scene {i + 1} | source=Wan2.2 local | local_file={p.relative_to(ROOT)}" for i, p in enumerate(sorted(VISUALS.glob("visual_*.mp4")))) + "\n",
+    files = sorted(VISUALS.glob("visual_*.mp4"))
+    (VISUALS / "sources.txt").write_text(
+        "\n".join(
+            f"Scene {i + 1} | source=Wan2.2 local | local_file={p.relative_to(ROOT)}"
+            for i, p in enumerate(files)
+        ) + "\n",
         encoding="utf-8",
     )
     print(f"WAN_REPORT generated={generated} total={len(scenes)}")
