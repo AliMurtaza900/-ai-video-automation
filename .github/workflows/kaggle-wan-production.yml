@@ -8,9 +8,9 @@ on:
         required: false
         default: "Create a cinematic, high-retention YouTube Short about a surprising fact"
       max_shots:
-        description: "Maximum Wan shots (keep 2-4 on free GPU)"
+        description: "Maximum Wan shots (start with 2 on free GPU)"
         required: false
-        default: "4"
+        default: "2"
 
 jobs:
   kaggle-wan:
@@ -21,16 +21,30 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Kaggle CLI
-        run: python -m pip install --upgrade kaggle
+        run: python -m pip install --upgrade "kaggle>=1.7.4"
 
-      - name: Verify Kaggle credentials
+      - name: Configure Kaggle authentication
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
         run: |
-          test -n "$KAGGLE_USERNAME" || (echo "Missing KAGGLE_USERNAME GitHub secret"; exit 1)
-          test -n "$KAGGLE_KEY" || (echo "Missing KAGGLE_KEY GitHub secret"; exit 1)
+          set -euo pipefail
+          mkdir -p "$HOME/.kaggle"
+          if [ -n "${KAGGLE_API_TOKEN:-}" ]; then
+            echo "Using Kaggle API token authentication"
+            export KAGGLE_API_TOKEN
+          elif [ -n "${KAGGLE_USERNAME:-}" ] && [ -n "${KAGGLE_KEY:-}" ]; then
+            echo "Using Kaggle username/API-key authentication"
+            printf '{"username":"%s","key":"%s"}\n' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > "$HOME/.kaggle/kaggle.json"
+            chmod 600 "$HOME/.kaggle/kaggle.json"
+          else
+            echo "Missing Kaggle credentials. Add KAGGLE_API_TOKEN, or KAGGLE_USERNAME + KAGGLE_KEY, to GitHub Actions secrets."
+            exit 1
+          fi
           kaggle --version
+          kaggle kernels list --mine --page-size 1 >/dev/null
+          echo "Kaggle authentication OK"
 
       - name: Build Kaggle kernel package
         env:
@@ -39,12 +53,15 @@ jobs:
           MAX_SHOTS: ${{ inputs.max_shots }}
           REPO_REF: ${{ github.sha }}
         run: |
+          set -euo pipefail
+          test -n "$KAGGLE_USERNAME" || (echo "KAGGLE_USERNAME is required for the kernel id"; exit 1)
           rm -rf .kaggle-kernel kaggle-output
           mkdir -p .kaggle-kernel
           cp kaggle/wan_runner.py .kaggle-kernel/wan_runner.py
           python - <<'PY'
           import json, os
           from pathlib import Path
+          username = os.environ['KAGGLE_USERNAME'].strip()
           Path('.kaggle-kernel/job_config.json').write_text(json.dumps({
               'repo': 'https://github.com/AliMurtaza900/-ai-video-automation.git',
               'ref': os.environ['REPO_REF'],
@@ -52,14 +69,14 @@ jobs:
               'max_shots': int(os.environ['MAX_SHOTS']),
           }), encoding='utf-8')
           metadata = {
-              'id': f"{os.environ['KAGGLE_USERNAME']}/wan2-2-ai-video-automation",
+              'id': f"{username}/wan2-2-ai-video-automation",
               'title': 'Wan 2.2 AI Video Automation',
               'code_file': 'wan_runner.py',
               'language': 'python',
               'kernel_type': 'script',
-              'is_private': 'true',
-              'enable_gpu': 'true',
-              'enable_internet': 'true',
+              'is_private': True,
+              'enable_gpu': True,
+              'enable_internet': True,
               'machine_shape': 'NvidiaTeslaT4',
               'dataset_sources': [],
               'competition_sources': [],
@@ -67,26 +84,35 @@ jobs:
               'model_sources': [],
           }
           Path('.kaggle-kernel/kernel-metadata.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
+          print('Kernel id:', metadata['id'])
           PY
 
       - name: Submit Kaggle GPU job
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
         run: |
+          set -euo pipefail
           kaggle kernels push -p .kaggle-kernel
 
       - name: Wait for Kaggle job
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
         run: |
+          set -euo pipefail
           KERNEL="$KAGGLE_USERNAME/wan2-2-ai-video-automation"
-          for i in $(seq 1 120); do
+          for i in $(seq 1 150); do
             STATUS="$(kaggle kernels status "$KERNEL" 2>&1 || true)"
+            echo "--- Kaggle status check $i/150 ---"
             echo "$STATUS"
             if echo "$STATUS" | grep -Eqi 'complete|success'; then exit 0; fi
-            if echo "$STATUS" | grep -Eqi 'error|failed|cancel'; then exit 1; fi
+            if echo "$STATUS" | grep -Eqi 'error|failed|cancel'; then
+              echo "Kaggle kernel failed."
+              exit 1
+            fi
             sleep 60
           done
           echo "Kaggle job timed out while waiting"
@@ -96,9 +122,12 @@ jobs:
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
         run: |
+          set -euo pipefail
           mkdir -p kaggle-output
-          kaggle kernels output "$KAGGLE_USERNAME/wan2-2-ai-video-automation" -p kaggle-output -o
+          KERNEL="$KAGGLE_USERNAME/wan2-2-ai-video-automation"
+          kaggle kernels output "$KERNEL" -p kaggle-output -o
           find kaggle-output -maxdepth 2 -type f -print
           test -s kaggle-output/final-video.mp4
 
@@ -112,6 +141,7 @@ jobs:
           YOUTUBE_TITLE: ${{ inputs.goal }}
           SKIP_YOUTUBE_UPLOAD: "false"
         run: |
+          set -euo pipefail
           cp kaggle-output/final-video.mp4 output/final-video.mp4
           if [ -f kaggle-output/voice.mp3 ]; then cp kaggle-output/voice.mp3 output/voice.mp3; fi
           if [ -f kaggle-output/script.txt ]; then cp kaggle-output/script.txt output/script.txt; fi
