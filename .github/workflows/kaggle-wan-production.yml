@@ -33,7 +33,6 @@ jobs:
           mkdir -p "$HOME/.kaggle"
           if [ -n "${KAGGLE_API_TOKEN:-}" ]; then
             echo "Using Kaggle API token authentication"
-            export KAGGLE_API_TOKEN
           elif [ -n "${KAGGLE_USERNAME:-}" ] && [ -n "${KAGGLE_KEY:-}" ]; then
             echo "Using Kaggle username/API-key authentication"
             printf '{"username":"%s","key":"%s"}\n' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > "$HOME/.kaggle/kaggle.json"
@@ -62,6 +61,7 @@ jobs:
           import json, os
           from pathlib import Path
           username = os.environ['KAGGLE_USERNAME'].strip()
+          kernel_id = f"{username}/wan2-2-ai-video-automation"
           Path('.kaggle-kernel/job_config.json').write_text(json.dumps({
               'repo': 'https://github.com/AliMurtaza900/-ai-video-automation.git',
               'ref': os.environ['REPO_REF'],
@@ -69,7 +69,7 @@ jobs:
               'max_shots': int(os.environ['MAX_SHOTS']),
           }), encoding='utf-8')
           metadata = {
-              'id': f"{username}/wan2-2-ai-video-automation",
+              'id': kernel_id,
               'title': 'Wan 2.2 AI Video Automation',
               'code_file': 'wan_runner.py',
               'language': 'python',
@@ -84,7 +84,8 @@ jobs:
               'model_sources': [],
           }
           Path('.kaggle-kernel/kernel-metadata.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
-          print('Kernel id:', metadata['id'])
+          Path('.kaggle-kernel/kernel_id.txt').write_text(kernel_id, encoding='utf-8')
+          print('Kernel id:', kernel_id)
           PY
 
       - name: Submit Kaggle GPU job
@@ -96,14 +97,15 @@ jobs:
           set -euo pipefail
           kaggle kernels push -p .kaggle-kernel
 
-      - name: Wait for Kaggle job
+      - name: Verify Kaggle kernel and wait
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
           KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
         run: |
           set -euo pipefail
-          KERNEL="$KAGGLE_USERNAME/wan2-2-ai-video-automation"
+          KERNEL="$(cat .kaggle-kernel/kernel_id.txt)"
+          echo "Using exact Kaggle kernel: $KERNEL"
           for i in $(seq 1 150); do
             STATUS="$(kaggle kernels status "$KERNEL" 2>&1 || true)"
             echo "--- Kaggle status check $i/150 ---"
@@ -126,7 +128,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p kaggle-output
-          KERNEL="$KAGGLE_USERNAME/wan2-2-ai-video-automation"
+          KERNEL="$(cat .kaggle-kernel/kernel_id.txt)"
           kaggle kernels output "$KERNEL" -p kaggle-output -o
           find kaggle-output -maxdepth 2 -type f -print
           test -s kaggle-output/final-video.mp4
