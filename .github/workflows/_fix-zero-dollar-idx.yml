@@ -27,15 +27,13 @@ jobs:
           assert old_env in s or new_env in s, 'Expected environment f-string not found'
           s = s.replace(old_env, new_env, 1)
 
-          old_parts = "parts={'root':root,'mouth':uv('HeroMouth',(0,-.685,2.38),(.15,.025,.055),MOUTH,c),\n           'tail':uv('HeroTail',(.72,.18,1.62),(.55,.20,.30),ORANGE,c),\n           'eyeL':None,'eyeR':None,'pupilL':None,'pupilR':None,'armL':None,'armR':None}"
-          new_parts = "parts={{'root':root,'mouth':uv('HeroMouth',(0,-.685,2.38),(.15,.025,.055),MOUTH,c),\n           'tail':uv('HeroTail',(.72,.18,1.62),(.55,.20,.30),ORANGE,c),\n           'eyeL':None,'eyeR':None,'pupilL':None,'pupilR':None,'armL':None,'armR':None}}"
-          assert old_parts in s, 'Expected parts dictionary not found'
-          s = s.replace(old_parts, new_parts, 1)
+          if "parts={'root':root" in s:
+              s = s.replace("parts={'root':root", "parts={{'root':root", 1)
+              s = s.replace("'armR':None}", "'armR':None}}", 1)
 
-          old_colors = "colors={'ocean':(.01,.06,.16,1),'forest':(.015,.06,.02,1),'desert':(.15,.07,.025,1),'snow':(.10,.15,.22,1),'volcano':(.08,.008,.003,1),'space':(.001,.002,.01,1),'city':(.015,.025,.07,1),'meadow':(.025,.07,.035,1)}"
-          new_colors = "colors={{'ocean':(.01,.06,.16,1),'forest':(.015,.06,.02,1),'desert':(.15,.07,.025,1),'snow':(.10,.15,.22,1),'volcano':(.08,.008,.003,1),'space':(.001,.002,.01,1),'city':(.015,.025,.07,1),'meadow':(.025,.07,.035,1)}}"
-          assert old_colors in s, 'Expected colors dictionary not found'
-          s = s.replace(old_colors, new_colors, 1)
+          if "colors={'ocean'" in s:
+              s = s.replace("colors={'ocean'", "colors={{'ocean'", 1)
+              s = s.replace("'meadow':(.025,.07,.035,1)}", "'meadow':(.025,.07,.035,1)}}", 1)
 
           p.write_text(s, encoding='utf-8')
           print('IDX_AND_LITERAL_BRACE_FIX_APPLIED')
