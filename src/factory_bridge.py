@@ -66,6 +66,12 @@ def main() -> int:
     python = sys.executable
     run([python, "src/main.py"])
     run([python, "src/fetch_visuals.py"])
+
+    # Optional local AI video generation. It is deliberately opt-in so normal
+    # GitHub/CPU runs keep the existing free visual fallback.
+    if os.environ.get("WAN_ENABLED", "false").lower() in {"1", "true", "yes", "on"}:
+        run([python, "src/wan_video.py"])
+
     run([python, "src/add_voice.py"])
     run([python, "src/render_video.py"])
 
@@ -88,6 +94,7 @@ def main() -> int:
         "description": os.environ.get("YOUTUBE_DESCRIPTION", ""),
         "video_id": data["youtube_id"],
         "sha256": expected_hash,
+        "video_engine": "wan2.2-ti2v-5b" if os.environ.get("WAN_ENABLED", "false").lower() in {"1", "true", "yes", "on"} else "existing",
     }
     (WORKSPACE / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result))
