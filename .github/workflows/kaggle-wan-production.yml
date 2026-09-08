@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Kaggle CLI
-        run: python -m pip install --upgrade "kaggle>=1.7.4"
+        run: python -m pip install --upgrade "kaggle>=2.2.4"
 
       - name: Configure Kaggle authentication
         run: |
@@ -106,25 +106,59 @@ jobs:
           set -euo pipefail
           KERNEL="$(cat .kaggle-kernel/kernel_id.txt)"
           echo "Submitting exact Kaggle kernel: $KERNEL"
-          kaggle kernels push -p .kaggle-kernel
+          # Explicit accelerator selection is required by current Kaggle CLI/API.
+          kaggle kernels push -p .kaggle-kernel --accelerator NvidiaTeslaT4 --timeout 10800
 
       - name: Wait for Kaggle job
+        id: wait-kaggle
+        continue-on-error: true
         run: |
-          set -euo pipefail
+          set -u
           KERNEL="$(cat .kaggle-kernel/kernel_id.txt)"
-          for i in $(seq 1 150); do
+          FINAL_STATUS="unknown"
+          for i in $(seq 1 170); do
             STATUS="$(kaggle kernels status "$KERNEL" 2>&1 || true)"
-            echo "--- Kaggle status check $i/150 ---"
+            echo "--- Kaggle status check $i/170 ---"
             echo "$STATUS"
-            if echo "$STATUS" | grep -Eqi 'complete|success'; then exit 0; fi
+            FINAL_STATUS="$STATUS"
+            if echo "$STATUS" | grep -Eqi 'complete|success'; then
+              echo "success" > .kaggle-kernel/status.txt
+              exit 0
+            fi
             if echo "$STATUS" | grep -Eqi 'error|failed|cancel'; then
-              echo "Kaggle kernel failed."
+              echo "$STATUS" > .kaggle-kernel/status.txt
+              echo "failure" > .kaggle-kernel/result.txt
               exit 1
             fi
             sleep 60
           done
-          echo "Kaggle job timed out while waiting"
+          echo "$FINAL_STATUS" > .kaggle-kernel/status.txt
+          echo "timeout" > .kaggle-kernel/result.txt
           exit 1
+
+      - name: Collect Kaggle diagnostics
+        if: always()
+        run: |
+          set +e
+          KERNEL="$(cat .kaggle-kernel/kernel_id.txt)"
+          echo "========== FINAL KAGGLE STATUS =========="
+          kaggle kernels status "$KERNEL" || true
+          echo "========== KAGGLE RUNTIME LOG =========="
+          kaggle kernels logs "$KERNEL" || true
+          echo "========== KAGGLE OUTPUT FILES =========="
+          kaggle kernels files "$KERNEL" --page-size 200 || true
+          echo "========== END KAGGLE DIAGNOSTICS =========="
+
+      - name: Fail if Kaggle job did not succeed
+        run: |
+          set -euo pipefail
+          KERNEL="$(cat .kaggle-kernel/kernel_id.txt)"
+          STATUS="$(kaggle kernels status "$KERNEL" 2>&1 || true)"
+          echo "$STATUS"
+          if ! echo "$STATUS" | grep -Eqi 'complete|success'; then
+            echo "Kaggle GPU generation did not complete successfully. See the diagnostic log above."
+            exit 1
+          fi
 
       - name: Download Kaggle outputs
         run: |
@@ -157,12 +191,15 @@ jobs:
           echo "YouTube upload completed. The video is PRIVATE for review."
 
       - name: Upload GitHub artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kaggle-wan2.2-final-video
+          name: kaggle-wan2.2-run-${{ github.run_id }}
           path: |
+            .kaggle-kernel/status.txt
+            .kaggle-kernel/result.txt
             output/final-video.mp4
             output/script.txt
             output/youtube_upload.json
             kaggle-output/sources.txt
-          if-no-files-found: error
+          if-no-files-found: warn
