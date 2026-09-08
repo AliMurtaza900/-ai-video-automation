@@ -1,0 +1,74 @@
+name: Repair pipeline
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor == 'AliMurtaza900' || github.actor == 'ai-video-automation[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch known pipeline failures
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/zero_dollar_3d_engine_v2.py')
+          s = p.read_text(encoding='utf-8')
+          old = "c=new_collection(f'ENV_{idx:02d}_{theme}')"
+          new = "c=new_collection(f'ENV_{{idx:02d}}_{{theme}}')"
+          if old not in s:
+              raise SystemExit('Expected Blender environment f-string was not found')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+
+          p = Path('src/factory_bridge.py')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace(
+              "for path in (OUTPUT / \"final-video.mp4\", OUTPUT / \"test-video.mp4\", OUTPUT / \"voice.mp3\", OUTPUT / \"caption_timing.txt\"):",
+              "for path in (OUTPUT / \"final-video.mp4\", OUTPUT / \"test-video.mp4\", OUTPUT / \"voice.mp3\", OUTPUT / \"caption_timing.txt\"):",
+          )
+          old_block = '''    rendered = OUTPUT / "test-video.mp4"\n    voice = OUTPUT / "voice.mp3"\n    final = OUTPUT / "final-video.mp4"\n    if not rendered.is_file() or rendered.stat().st_size == 0:\n        raise RuntimeError("render stage did not create output/test-video.mp4")\n    if not voice.is_file() or voice.stat().st_size == 0:\n        raise RuntimeError("voice stage did not create output/voice.mp3")\n\n    run(["ffmpeg", "-y", "-i", str(rendered), "-i", str(voice), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", str(final)])\n    if not final.is_file() or final.stat().st_size == 0:\n        raise RuntimeError("final video preparation failed")\n'''
+          new_block = '''    # render_video.py already creates the complete final-video.mp4, including\n    # captions and narration. Do not look for the obsolete test-video.mp4 or\n    # mux the voice a second time.\n    final = OUTPUT / "final-video.mp4"\n    voice = OUTPUT / "voice.mp3"\n    if not final.is_file() or final.stat().st_size == 0:\n        raise RuntimeError("render stage did not create output/final-video.mp4")\n    if not voice.is_file() or voice.stat().st_size == 0:\n        raise RuntimeError("voice stage did not create output/voice.mp3")\n'''
+          if old_block not in s:
+              raise SystemExit('Expected factory bridge render block was not found')
+          p.write_text(s.replace(old_block, new_block, 1), encoding='utf-8')
+
+          p = Path('.github/workflows/ai-factory-production.yml')
+          s = p.read_text(encoding='utf-8')
+          old = '''          git add data/factory-workspaces data/factory-jobs 2>/dev/null || true\n          if git diff --cached --quiet; then\n            echo "No Factory state changes to commit."\n            exit 0\n          fi\n          git commit -m "Persist AI Factory production state"\n          for attempt in 1 2 3; do\n            if git fetch origin main && git rebase origin/main && git push origin HEAD:main; then\n              exit 0\n            fi\n            git rebase --abort 2>/dev/null || true\n            sleep $((attempt * 5))\n          done\n          echo "WARNING: Could not persist Factory state to video repository."'''
+          new = '''          git add -A data/factory-workspaces data/factory-jobs\n          if git diff --cached --quiet; then\n            echo "No Factory state changes to commit."\n            exit 0\n          fi\n          # Rebase before committing so generated state is not left behind as\n          # unstaged changes when another workflow updates main.\n          git fetch origin main\n          git rebase origin/main\n          git add -A data/factory-workspaces data/factory-jobs\n          git commit -m "Persist AI Factory production state"\n          for attempt in 1 2 3; do\n            if git push origin HEAD:main; then\n              exit 0\n            fi\n            git fetch origin main\n            git rebase origin/main\n            git add -A data/factory-workspaces data/factory-jobs\n            sleep $((attempt * 5))\n          done\n          echo "WARNING: Could not persist Factory state to video repository."'''
+          if old not in s:
+              raise SystemExit('Expected persistence block was not found')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Validate repairs
+        run: |
+          python -m compileall -q src
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          src = Path('src/zero_dollar_3d_engine_v2.py').read_text(encoding='utf-8')
+          ast.parse(src)
+          bridge = Path('src/factory_bridge.py').read_text(encoding='utf-8')
+          assert 'test-video.mp4' not in bridge
+          assert 'final-video.mp4' in bridge
+          print('repair validation passed')
+          PY
+
+      - name: Commit repairs and remove this repair workflow
+        run: |
+          git config user.name 'ai-video-automation[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/zero_dollar_3d_engine_v2.py src/factory_bridge.py .github/workflows/ai-factory-production.yml
+          git rm .github/workflows/repair-pipeline.yml
+          git commit -m 'Fix 3D renderer bridge and state persistence'
+          git push origin HEAD:main
