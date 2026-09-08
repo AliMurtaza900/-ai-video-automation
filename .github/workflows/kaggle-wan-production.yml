@@ -1,0 +1,131 @@
+name: Free Kaggle Wan 2.2 Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      goal:
+        description: "Video goal"
+        required: false
+        default: "Create a cinematic, high-retention YouTube Short about a surprising fact"
+      max_shots:
+        description: "Maximum Wan shots (keep 2-4 on free GPU)"
+        required: false
+        default: "4"
+
+jobs:
+  kaggle-wan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Kaggle CLI
+        run: python -m pip install --upgrade kaggle
+
+      - name: Verify Kaggle credentials
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          test -n "$KAGGLE_USERNAME" || (echo "Missing KAGGLE_USERNAME GitHub secret"; exit 1)
+          test -n "$KAGGLE_KEY" || (echo "Missing KAGGLE_KEY GitHub secret"; exit 1)
+          kaggle --version
+
+      - name: Build Kaggle kernel package
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          GOAL: ${{ inputs.goal }}
+          MAX_SHOTS: ${{ inputs.max_shots }}
+          REPO_REF: ${{ github.sha }}
+        run: |
+          rm -rf .kaggle-kernel kaggle-output
+          mkdir -p .kaggle-kernel
+          cp kaggle/wan_runner.py .kaggle-kernel/wan_runner.py
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path('.kaggle-kernel/job_config.json').write_text(json.dumps({
+              'repo': 'https://github.com/AliMurtaza900/-ai-video-automation.git',
+              'ref': os.environ['REPO_REF'],
+              'goal': os.environ['GOAL'],
+              'max_shots': int(os.environ['MAX_SHOTS']),
+          }), encoding='utf-8')
+          metadata = {
+              'id': f"{os.environ['KAGGLE_USERNAME']}/wan2-2-ai-video-automation",
+              'title': 'Wan 2.2 AI Video Automation',
+              'code_file': 'wan_runner.py',
+              'language': 'python',
+              'kernel_type': 'script',
+              'is_private': 'true',
+              'enable_gpu': 'true',
+              'enable_internet': 'true',
+              'machine_shape': 'NvidiaTeslaT4',
+              'dataset_sources': [],
+              'competition_sources': [],
+              'kernel_sources': [],
+              'model_sources': [],
+          }
+          Path('.kaggle-kernel/kernel-metadata.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
+          PY
+
+      - name: Submit Kaggle GPU job
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          kaggle kernels push -p .kaggle-kernel
+
+      - name: Wait for Kaggle job
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          KERNEL="$KAGGLE_USERNAME/wan2-2-ai-video-automation"
+          for i in $(seq 1 120); do
+            STATUS="$(kaggle kernels status "$KERNEL" 2>&1 || true)"
+            echo "$STATUS"
+            if echo "$STATUS" | grep -Eqi 'complete|success'; then exit 0; fi
+            if echo "$STATUS" | grep -Eqi 'error|failed|cancel'; then exit 1; fi
+            sleep 60
+          done
+          echo "Kaggle job timed out while waiting"
+          exit 1
+
+      - name: Download Kaggle outputs
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          mkdir -p kaggle-output
+          kaggle kernels output "$KAGGLE_USERNAME/wan2-2-ai-video-automation" -p kaggle-output -o
+          find kaggle-output -maxdepth 2 -type f -print
+          test -s kaggle-output/final-video.mp4
+
+      - name: Upload final video to YouTube from GitHub
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          VIDEO_GOAL: ${{ inputs.goal }}
+          YOUTUBE_TITLE: ${{ inputs.goal }}
+          SKIP_YOUTUBE_UPLOAD: "false"
+        run: |
+          cp kaggle-output/final-video.mp4 output/final-video.mp4
+          if [ -f kaggle-output/voice.mp3 ]; then cp kaggle-output/voice.mp3 output/voice.mp3; fi
+          if [ -f kaggle-output/script.txt ]; then cp kaggle-output/script.txt output/script.txt; fi
+          python -m pip install -r requirements.txt
+          python src/youtube_upload.py
+          test -s output/youtube_upload.json
+
+      - name: Upload GitHub artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaggle-wan2.2-final-video
+          path: |
+            output/final-video.mp4
+            output/script.txt
+            output/youtube_upload.json
+            kaggle-output/sources.txt
+          if-no-files-found: error
