@@ -51,6 +51,7 @@ jobs:
           GOAL: ${{ inputs.goal }}
           MAX_SHOTS: ${{ inputs.max_shots }}
           REPO_REF: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
           test -n "$KAGGLE_USERNAME" || (echo "KAGGLE_USERNAME is required for the kernel id"; exit 1)
@@ -61,8 +62,11 @@ jobs:
           import json, os
           from pathlib import Path
           username = os.environ['KAGGLE_USERNAME'].strip()
-          # Kaggle links the kernel slug to the title: spaces become dashes.
-          kernel_id = f"{username}/wan-2-2-ai-video-automation"
+          run_id = os.environ['RUN_ID'].strip()
+          # Use a fresh kernel slug for every GitHub Actions run. This avoids
+          # Kaggle SaveKernel 409 conflicts when an older kernel is still busy.
+          kernel_id = f"{username}/wan-2-2-ai-video-automation-{run_id}"
+          title = f"Wan 2 2 AI Video Automation {run_id}"
           Path('.kaggle-kernel/job_config.json').write_text(json.dumps({
               'repo': 'https://github.com/AliMurtaza900/-ai-video-automation.git',
               'ref': os.environ['REPO_REF'],
@@ -71,7 +75,7 @@ jobs:
           }), encoding='utf-8')
           metadata = {
               'id': kernel_id,
-              'title': 'Wan 2 2 AI Video Automation',
+              'title': title,
               'code_file': 'wan_runner.py',
               'language': 'python',
               'kernel_type': 'script',
@@ -97,7 +101,7 @@ jobs:
         run: |
           set -euo pipefail
           KERNEL="$(cat .kaggle-kernel/kernel_id.txt)"
-          echo "Submitting exact Kaggle kernel: $KERNEL"
+          echo "Submitting unique Kaggle kernel: $KERNEL"
           kaggle kernels push -p .kaggle-kernel
 
       - name: Wait for Kaggle job
