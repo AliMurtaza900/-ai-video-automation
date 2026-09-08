@@ -17,8 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
-      # New Kaggle token authentication only. Legacy KAGGLE_KEY is not used.
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      # IMPORTANT: this must be a persistent Kaggle kernel that has Internet
+      # enabled once in the Kaggle UI. API-pushed kernels may ignore the
+      # enable_internet metadata flag.
+      KAGGLE_KERNEL_ID: alimurtaza904/wan-2-2-ai-video-automation
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,23 +32,16 @@ jobs:
       - name: Configure and validate Kaggle authentication
         run: |
           set -euo pipefail
-          if [ -z "${KAGGLE_API_TOKEN:-}" ]; then
-            echo "Missing GitHub Actions secret: KAGGLE_API_TOKEN"
-            exit 1
-          fi
+          test -n "${KAGGLE_API_TOKEN:-}" || { echo "Missing GitHub Actions secret: KAGGLE_API_TOKEN"; exit 1; }
           kaggle --version
-          echo "Validating Kaggle API token..."
           kaggle kernels list --mine --page-size 1 >/dev/null
           echo "Kaggle token authentication validated successfully."
 
-      - name: Build Kaggle kernel package
+      - name: Build persistent Kaggle kernel package
         env:
-          KAGGLE_OWNER: alimurtaza904
           GOAL: ${{ inputs.goal }}
           MAX_SHOTS: ${{ inputs.max_shots }}
-          # Keep runner and application code synchronized on main.
           REPO_REF: main
-          RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
           rm -rf .kaggle-kernel kaggle-output
@@ -58,17 +54,12 @@ jobs:
           import json, os
           from pathlib import Path
 
-          username = os.environ['KAGGLE_OWNER'].strip()
-          run_id = os.environ['RUN_ID'].strip()
           config = {
               'repo': 'https://github.com/AliMurtaza900/-ai-video-automation.git',
               'ref': os.environ['REPO_REF'],
               'goal': os.environ['GOAL'],
               'max_shots': int(os.environ['MAX_SHOTS']),
           }
-          kernel_id = f"{username}/wan-2-2-ai-video-automation-{run_id}"
-          title = f"Wan 2 2 AI Video Automation {run_id}"
-
           runner = Path('.kaggle-kernel/wan_runner.py')
           text = runner.read_text(encoding='utf-8')
           marker = 'EMBEDDED_CONFIG = None'
@@ -78,8 +69,8 @@ jobs:
           runner.write_text(text, encoding='utf-8')
 
           metadata = {
-              'id': kernel_id,
-              'title': title,
+              'id': os.environ['KAGGLE_KERNEL_ID'],
+              'title': 'Wan 2 2 AI Video Automation',
               'code_file': 'wan_runner.py',
               'language': 'python',
               'kernel_type': 'script',
@@ -92,16 +83,14 @@ jobs:
               'kernel_sources': [],
               'model_sources': [],
           }
-          Path('.kaggle-kernel/kernel-metadata.json').write_text(
-              json.dumps(metadata, indent=2), encoding='utf-8'
-          )
-          Path('.kaggle-kernel/kernel_id.txt').write_text(kernel_id, encoding='utf-8')
-          print('Kernel id:', kernel_id)
+          Path('.kaggle-kernel/kernel-metadata.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
+          Path('.kaggle-kernel/kernel_id.txt').write_text(os.environ['KAGGLE_KERNEL_ID'], encoding='utf-8')
+          print('Persistent kernel:', os.environ['KAGGLE_KERNEL_ID'])
           print('Embedded config:', json.dumps(config, indent=2))
           PY
 
           sha256sum .kaggle-kernel/wan_runner.py
-          grep -n "EMBEDDED_CONFIG\|--no-deps\|WAN_SIZE\|WAN_STEPS\|WAN_FRAMES" .kaggle-kernel/wan_runner.py
+          grep -n "EMBEDDED_CONFIG\|check_internet\|WAN2GP_COMMIT\|WAN_SIZE\|WAN_STEPS\|WAN_FRAMES" .kaggle-kernel/wan_runner.py
 
       - name: Submit Kaggle GPU job
         run: |
@@ -146,7 +135,6 @@ jobs:
           kaggle kernels logs "$KERNEL"
           echo "========== KAGGLE OUTPUT FILES =========="
           kaggle kernels files "$KERNEL" --page-size 200
-
           kaggle kernels status "$KERNEL" > .kaggle-kernel/kaggle-status.log 2>&1
           kaggle kernels logs "$KERNEL" > .kaggle-kernel/kaggle-runtime.log 2>&1
           kaggle kernels files "$KERNEL" --page-size 200 > .kaggle-kernel/kaggle-files.log 2>&1
@@ -158,7 +146,7 @@ jobs:
           STATUS="$(kaggle kernels status "$KERNEL" 2>&1 || true)"
           echo "$STATUS"
           if ! echo "$STATUS" | grep -Eqi 'complete|success'; then
-            echo "Kaggle GPU generation failed. See kaggle-runtime.log in the artifact."
+            echo "Kaggle GPU generation failed. Runtime diagnostics were collected above and in the artifact."
             exit 1
           fi
 
