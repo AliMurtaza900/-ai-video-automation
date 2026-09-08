@@ -21,10 +21,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Kaggle CLI
-        run: python -m pip install --upgrade "kaggle>=1.7.4" kagglehub
+        run: python -m pip install --upgrade "kaggle>=1.7.4"
 
       - name: Configure Kaggle authentication
-        id: kaggle-auth
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
@@ -32,6 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.kaggle"
+
           if [ -n "${KAGGLE_API_TOKEN:-}" ]; then
             echo "Using Kaggle API token authentication"
           elif [ -n "${KAGGLE_USERNAME:-}" ] && [ -n "${KAGGLE_KEY:-}" ]; then
@@ -45,38 +45,15 @@ jobs:
 
           kaggle --version
           kaggle kernels list --mine --page-size 1 >/dev/null
-
-          # kagglehub.whoami() writes a validation message to stdout before
-          # returning the identity. Capture that stdout internally so ONLY the
-          # username is ever written to GITHUB_OUTPUT. This prevents the GitHub
-          # runner from interpreting the validation message as an env command.
-          KAGGLE_OWNER="$(python - <<'PY'
-          import contextlib
-          import io
-          import kagglehub
-
-          captured = io.StringIO()
-          with contextlib.redirect_stdout(captured):
-              info = kagglehub.whoami()
-          username = info.get('username') if isinstance(info, dict) else None
-          if not username:
-              raise SystemExit(f'Could not determine authenticated Kaggle username: {info!r}')
-          print(str(username).strip())
-          PY
-          )"
-
-          # Validate that the value is exactly one safe, single-line username.
-          KAGGLE_OWNER="$(printf '%s' "$KAGGLE_OWNER" | tr -d '\r' | head -n 1)"
-          if ! printf '%s' "$KAGGLE_OWNER" | grep -Eq '^[A-Za-z0-9._-]+$'; then
-            echo "Kaggle username returned an unexpected format: $KAGGLE_OWNER"
-            exit 1
-          fi
-          echo "Authenticated Kaggle owner: $KAGGLE_OWNER"
-          printf 'owner=%s\n' "$KAGGLE_OWNER" >> "$GITHUB_OUTPUT"
+          echo "Kaggle credentials validated successfully."
 
       - name: Build Kaggle kernel package
         env:
-          KAGGLE_OWNER: ${{ steps.kaggle-auth.outputs.owner }}
+          # Do not call kagglehub.whoami() and do not pass the owner through
+          # GITHUB_ENV/GITHUB_OUTPUT. The authenticated Kaggle account is the
+          # user's Kaggle account, and this avoids multiline stdout corrupting
+          # GitHub Actions command files.
+          KAGGLE_OWNER: alimurtaza904
           GOAL: ${{ inputs.goal }}
           MAX_SHOTS: ${{ inputs.max_shots }}
           REPO_REF: ${{ github.sha }}
@@ -87,19 +64,23 @@ jobs:
           rm -rf .kaggle-kernel kaggle-output
           mkdir -p .kaggle-kernel
           cp kaggle/wan_runner.py .kaggle-kernel/wan_runner.py
+
           python - <<'PY'
           import json, os
           from pathlib import Path
+
           username = os.environ['KAGGLE_OWNER'].strip()
           run_id = os.environ['RUN_ID'].strip()
           kernel_id = f"{username}/wan-2-2-ai-video-automation-{run_id}"
           title = f"Wan 2 2 AI Video Automation {run_id}"
+
           Path('.kaggle-kernel/job_config.json').write_text(json.dumps({
               'repo': 'https://github.com/AliMurtaza900/-ai-video-automation.git',
               'ref': os.environ['REPO_REF'],
               'goal': os.environ['GOAL'],
               'max_shots': int(os.environ['MAX_SHOTS']),
           }), encoding='utf-8')
+
           metadata = {
               'id': kernel_id,
               'title': title,
@@ -115,7 +96,10 @@ jobs:
               'kernel_sources': [],
               'model_sources': [],
           }
-          Path('.kaggle-kernel/kernel-metadata.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
+
+          Path('.kaggle-kernel/kernel-metadata.json').write_text(
+              json.dumps(metadata, indent=2), encoding='utf-8'
+          )
           Path('.kaggle-kernel/kernel_id.txt').write_text(kernel_id, encoding='utf-8')
           print('Kernel id:', kernel_id)
           print('Metadata:', json.dumps(metadata, indent=2))
