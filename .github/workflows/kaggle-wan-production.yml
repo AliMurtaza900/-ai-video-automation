@@ -23,26 +23,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Install Kaggle CLI
         run: python -m pip install --upgrade "kaggle>=2.2.4"
-
       - name: Configure Kaggle authentication
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.kaggle"
-
           if [ -n "${KAGGLE_API_TOKEN:-}" ]; then
             echo "Using Kaggle API token authentication"
           elif [ -n "${KAGGLE_USERNAME:-}" ] && [ -n "${KAGGLE_KEY:-}" ]; then
-            echo "Using Kaggle username/API-key authentication"
             printf '{"username":"%s","key":"%s"}\n' "$KAGGLE_USERNAME" "$KAGGLE_KEY" > "$HOME/.kaggle/kaggle.json"
             chmod 600 "$HOME/.kaggle/kaggle.json"
           else
-            echo "Missing Kaggle credentials. Add KAGGLE_API_TOKEN, or KAGGLE_USERNAME + KAGGLE_KEY, to GitHub Actions secrets."
+            echo "Missing Kaggle credentials."
             exit 1
           fi
-
           kaggle --version
           kaggle kernels list --mine --page-size 1 >/dev/null
           echo "Kaggle credentials validated successfully."
@@ -56,35 +51,30 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          test -n "$KAGGLE_OWNER"
           rm -rf .kaggle-kernel kaggle-output
           mkdir -p .kaggle-kernel
-
-          # Always use the newest runner from main. This prevents an old
-          # manually-dispatched/re-run workflow from packaging a stale runner.
-          curl -fsSL "https://raw.githubusercontent.com/AliMurtaza900/-ai-video-automation/main/kaggle/wan_runner.py" \
-            -o .kaggle-kernel/wan_runner.py
+          curl -fsSL "https://raw.githubusercontent.com/AliMurtaza900/-ai-video-automation/main/kaggle/wan_runner.py" -o .kaggle-kernel/wan_runner.py
           test -s .kaggle-kernel/wan_runner.py
-          echo "Packaged Wan runner:"
-          sha256sum .kaggle-kernel/wan_runner.py
-          grep -n "find_config\|--no-deps\|WAN_SIZE" .kaggle-kernel/wan_runner.py || true
-
           python - <<'PY'
           import json, os
           from pathlib import Path
-
           username = os.environ['KAGGLE_OWNER'].strip()
           run_id = os.environ['RUN_ID'].strip()
-          kernel_id = f"{username}/wan-2-2-ai-video-automation-{run_id}"
-          title = f"Wan 2 2 AI Video Automation {run_id}"
-
-          Path('.kaggle-kernel/job_config.json').write_text(json.dumps({
+          config = {
               'repo': 'https://github.com/AliMurtaza900/-ai-video-automation.git',
               'ref': os.environ['REPO_REF'],
               'goal': os.environ['GOAL'],
               'max_shots': int(os.environ['MAX_SHOTS']),
-          }), encoding='utf-8')
-
+          }
+          kernel_id = f"{username}/wan-2-2-ai-video-automation-{run_id}"
+          title = f"Wan 2 2 AI Video Automation {run_id}"
+          runner = Path('.kaggle-kernel/wan_runner.py')
+          text = runner.read_text(encoding='utf-8')
+          marker = 'EMBEDDED_CONFIG = None'
+          if marker not in text:
+              raise RuntimeError('wan_runner.py is missing EMBEDDED_CONFIG marker')
+          text = text.replace(marker, 'EMBEDDED_CONFIG = ' + repr(config), 1)
+          runner.write_text(text, encoding='utf-8')
           metadata = {
               'id': kernel_id,
               'title': title,
@@ -100,21 +90,18 @@ jobs:
               'kernel_sources': [],
               'model_sources': [],
           }
-
-          Path('.kaggle-kernel/kernel-metadata.json').write_text(
-              json.dumps(metadata, indent=2), encoding='utf-8'
-          )
+          Path('.kaggle-kernel/kernel-metadata.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
           Path('.kaggle-kernel/kernel_id.txt').write_text(kernel_id, encoding='utf-8')
           print('Kernel id:', kernel_id)
-          print('Metadata:', json.dumps(metadata, indent=2))
+          print('Embedded config:', json.dumps(config, indent=2))
           PY
+          sha256sum .kaggle-kernel/wan_runner.py
+          grep -n "EMBEDDED_CONFIG\|--no-deps\|WAN_SIZE" .kaggle-kernel/wan_runner.py
 
       - name: Submit Kaggle GPU job
         run: |
           set -euo pipefail
           KERNEL="$(cat .kaggle-kernel/kernel_id.txt)"
-          echo "Submitting exact Kaggle kernel: $KERNEL"
-          # Explicit accelerator selection is required by current Kaggle CLI/API.
           kaggle kernels push -p .kaggle-kernel --accelerator NvidiaTeslaT4 --timeout 10800
 
       - name: Wait for Kaggle job
@@ -149,13 +136,11 @@ jobs:
         run: |
           set +e
           KERNEL="$(cat .kaggle-kernel/kernel_id.txt)"
-          echo "========== FINAL KAGGLE STATUS =========="
           kaggle kernels status "$KERNEL" || true
           echo "========== KAGGLE RUNTIME LOG =========="
           kaggle kernels logs "$KERNEL" || true
           echo "========== KAGGLE OUTPUT FILES =========="
           kaggle kernels files "$KERNEL" --page-size 200 || true
-          echo "========== END KAGGLE DIAGNOSTICS =========="
 
       - name: Fail if Kaggle job did not succeed
         run: |
@@ -163,10 +148,7 @@ jobs:
           KERNEL="$(cat .kaggle-kernel/kernel_id.txt)"
           STATUS="$(kaggle kernels status "$KERNEL" 2>&1 || true)"
           echo "$STATUS"
-          if ! echo "$STATUS" | grep -Eqi 'complete|success'; then
-            echo "Kaggle GPU generation did not complete successfully. See the diagnostic log above."
-            exit 1
-          fi
+          if ! echo "$STATUS" | grep -Eqi 'complete|success'; then exit 1; fi
 
       - name: Download Kaggle outputs
         run: |
@@ -196,7 +178,6 @@ jobs:
           python -m pip install -r requirements.txt
           python src/youtube_upload.py
           test -s output/youtube_upload.json
-          echo "YouTube upload completed. The video is PRIVATE for review."
 
       - name: Upload GitHub artifact
         if: always()
