@@ -26,7 +26,6 @@ def find_config() -> Path:
     for candidate in candidates:
         if candidate.is_file():
             return candidate
-    # Kaggle script kernels package local files next to /kaggle/src/script.py.
     for candidate in Path("/kaggle/src").glob("**/job_config.json"):
         if candidate.is_file():
             return candidate
@@ -46,9 +45,21 @@ def main() -> None:
     goal = cfg["goal"]
     max_shots = str(cfg.get("max_shots", 2))
 
-    run(["nvidia-smi"])
-    run(["apt-get", "update", "-qq"])
-    run(["apt-get", "install", "-y", "-qq", "ffmpeg", "git"])
+    # Some Kaggle runtime images expose the GPU through CUDA/PyTorch but do not
+    # provide the nvidia-smi executable. Never make that optional diagnostic a
+    # hard failure; the real CUDA preflight below is authoritative.
+    nvidia_smi = shutil.which("nvidia-smi")
+    if nvidia_smi:
+        run([nvidia_smi])
+    else:
+        print("nvidia-smi not available in PATH; continuing with PyTorch CUDA preflight", flush=True)
+
+    # Kaggle images normally already contain ffmpeg/git, but install them when
+    # apt is available so the render stage is deterministic.
+    apt_get = shutil.which("apt-get")
+    if apt_get:
+        run([apt_get, "update", "-qq"])
+        run([apt_get, "install", "-y", "-qq", "ffmpeg", "git"])
 
     if REPO_DIR.exists():
         shutil.rmtree(REPO_DIR)
