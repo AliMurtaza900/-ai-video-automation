@@ -59,7 +59,15 @@ jobs:
           test -n "$KAGGLE_OWNER"
           rm -rf .kaggle-kernel kaggle-output
           mkdir -p .kaggle-kernel
-          cp kaggle/wan_runner.py .kaggle-kernel/wan_runner.py
+
+          # Always use the newest runner from main. This prevents an old
+          # manually-dispatched/re-run workflow from packaging a stale runner.
+          curl -fsSL "https://raw.githubusercontent.com/AliMurtaza900/-ai-video-automation/main/kaggle/wan_runner.py" \
+            -o .kaggle-kernel/wan_runner.py
+          test -s .kaggle-kernel/wan_runner.py
+          echo "Packaged Wan runner:"
+          sha256sum .kaggle-kernel/wan_runner.py
+          grep -n "find_config\|--no-deps\|WAN_SIZE" .kaggle-kernel/wan_runner.py || true
 
           python - <<'PY'
           import json, os
