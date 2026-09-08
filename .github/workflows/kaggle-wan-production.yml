@@ -43,9 +43,6 @@ jobs:
           fi
           kaggle --version
           kaggle kernels list --mine --page-size 1 >/dev/null
-          # IMPORTANT: use the username belonging to the credentials actually
-          # used above. Do not trust a separate KAGGLE_USERNAME secret when an
-          # API token is present; a mismatch causes kernels.get permission 403s.
           KAGGLE_OWNER="$(python - <<'PY'
           import kagglehub
           info = kagglehub.whoami()
@@ -66,7 +63,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          test -n "$KAGGLE_OWNER" || (echo "Authenticated Kaggle owner is empty"; exit 1)
+          test -n "$KAGGLE_OWNER"
           rm -rf .kaggle-kernel kaggle-output
           mkdir -p .kaggle-kernel
           cp kaggle/wan_runner.py .kaggle-kernel/wan_runner.py
@@ -104,10 +101,6 @@ jobs:
           PY
 
       - name: Submit Kaggle GPU job
-        env:
-          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
-          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
-          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
         run: |
           set -euo pipefail
           KERNEL="$(cat .kaggle-kernel/kernel_id.txt)"
@@ -115,14 +108,9 @@ jobs:
           kaggle kernels push -p .kaggle-kernel
 
       - name: Wait for Kaggle job
-        env:
-          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
-          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
-          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
         run: |
           set -euo pipefail
           KERNEL="$(cat .kaggle-kernel/kernel_id.txt)"
-          echo "Using exact Kaggle kernel: $KERNEL"
           for i in $(seq 1 150); do
             STATUS="$(kaggle kernels status "$KERNEL" 2>&1 || true)"
             echo "--- Kaggle status check $i/150 ---"
@@ -138,19 +126,15 @@ jobs:
           exit 1
 
       - name: Download Kaggle outputs
-        env:
-          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
-          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
-          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
         run: |
           set -euo pipefail
-          mkdir -p kaggle-output
+          mkdir -p kaggle-output output
           KERNEL="$(cat .kaggle-kernel/kernel_id.txt)"
           kaggle kernels output "$KERNEL" -p kaggle-output -o
           find kaggle-output -maxdepth 2 -type f -print
           test -s kaggle-output/final-video.mp4
 
-      - name: Upload final video to YouTube from GitHub
+      - name: Upload final video to YouTube
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
@@ -158,6 +142,8 @@ jobs:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           VIDEO_GOAL: ${{ inputs.goal }}
           YOUTUBE_TITLE: ${{ inputs.goal }}
+          YOUTUBE_PRIVACY: "private"
+          YOUTUBE_MADE_FOR_KIDS: "false"
           SKIP_YOUTUBE_UPLOAD: "false"
         run: |
           set -euo pipefail
@@ -167,6 +153,7 @@ jobs:
           python -m pip install -r requirements.txt
           python src/youtube_upload.py
           test -s output/youtube_upload.json
+          echo "YouTube upload completed. The video is PRIVATE for review."
 
       - name: Upload GitHub artifact
         uses: actions/upload-artifact@v4
