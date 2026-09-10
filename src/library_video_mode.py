@@ -1,8 +1,8 @@
-"""Mode 1: reuse user-owned/licensed video with fresh AI narration.
+"""Mode 1: one fixed user-owned/licensed video + fresh narration.
 
-The engine selects an unused local video, samples frames for visual context,
-asks Gemini for a fresh narration, and records the selected source. It never
-modifies or removes the existing kids-animation engines.
+The source is always assets/video_library/fixed_source.mp4. Each run generates
+fresh narration from sampled frames, while leaving all existing animation
+engines untouched.
 """
 from __future__ import annotations
 
@@ -17,11 +17,9 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
-LIBRARY = ROOT / "assets" / "video_library"
+SOURCE = ROOT / "assets" / "video_library" / "fixed_source.mp4"
 DATA = ROOT / "data"
-STATE = DATA / "video_library_state.json"
-
-VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
+STATE = DATA / "fixed_video_state.json"
 MODELS = ["gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]
 
 
@@ -34,34 +32,7 @@ def duration(path: Path) -> float:
     return float(r.stdout.strip())
 
 
-def load_state() -> dict:
-    try:
-        data = json.loads(STATE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
-
-
-def save_state(data: dict) -> None:
-    DATA.mkdir(parents=True, exist_ok=True)
-    STATE.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
-
-def choose_video() -> Path:
-    LIBRARY.mkdir(parents=True, exist_ok=True)
-    videos = sorted(p for p in LIBRARY.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXTS)
-    if not videos:
-        raise RuntimeError("No source videos found. Put your owned/licensed videos in assets/video_library/")
-    state = load_state()
-    used = set(state.get("used", []))
-    unused = [p for p in videos if str(p.relative_to(ROOT)) not in used]
-    candidates = unused or videos
-    # Prefer a clip that can become a 10-46s Short. Otherwise trim safely.
-    candidates.sort(key=lambda p: (duration(p) < 10, str(p)))
-    return candidates[0]
-
-
-def extract_frames(video: Path, count: int = 4) -> list[Image.Image]:
+def extract_frames(video: Path, count: int = 6) -> list[Image.Image]:
     d = max(0.1, duration(video))
     tmp = OUTPUT / "library_frames"
     tmp.mkdir(parents=True, exist_ok=True)
@@ -80,8 +51,8 @@ def extract_frames(video: Path, count: int = 4) -> list[Image.Image]:
 def validate_script(text: str) -> str:
     text = " ".join(text.strip().split())
     words = text.split()
-    if not 55 <= len(words) <= 115:
-        raise RuntimeError(f"Invalid narration length: {len(words)} words")
+    if not 90 <= len(words) <= 135:
+        raise RuntimeError(f"Invalid narration length: {len(words)} words; expected about 60 seconds")
     if any(token in text for token in ("```", "**", "#")):
         raise RuntimeError("Narration contains formatting")
     return text
@@ -95,12 +66,13 @@ def generate_narration(video: Path) -> str:
         raise RuntimeError("GEMINI_API_KEY is required for Mode 1 to create fresh narration")
     client = genai.Client(api_key=api_key)
     frames = extract_frames(video)
-    prompt = f"""You are writing narration for a YouTube Short using an existing user-owned or licensed video.
-Analyze the supplied frames and write ONE original narration that matches what is visibly happening.
-Do not claim things that cannot be supported by the video or the optional source note.
-Create a strong curiosity hook, natural pacing, and a satisfying ending.
+    prompt = f"""You are writing narration for a 60-second YouTube Short using an existing user-owned or properly licensed video.
+Analyze all supplied frames and write ONE original narration that matches what is visibly happening across the clip.
+Do not invent facts that cannot be supported by the video or optional source note.
+Create a strong first-sentence hook, natural spoken pacing, useful or entertaining commentary, and a satisfying final line.
+Target about 105-125 spoken words so the voice naturally fills roughly one minute.
 Return narration only: no title, labels, bullets, markdown, emojis, or stage directions.
-Target 65-100 spoken words. Keep it advertiser-friendly and suitable for a general audience.
+Keep it advertiser-friendly and suitable for a general audience.
 Optional source note: {context or 'none'}
 Video filename: {video.name}
 """
@@ -120,24 +92,34 @@ Video filename: {video.name}
 
 def main() -> None:
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    source = choose_video()
-    script = generate_narration(source)
-    (OUTPUT / "library_source.txt").write_text(str(source.relative_to(ROOT)), encoding="utf-8")
+    if not SOURCE.exists():
+        raise RuntimeError("Missing fixed source video: assets/video_library/fixed_source.mp4")
+    source_duration = duration(SOURCE)
+    if source_duration < 10:
+        raise RuntimeError(f"Fixed source video is too short: {source_duration:.2f}s")
+
+    script = generate_narration(SOURCE)
+    (OUTPUT / "library_source.txt").write_text(str(SOURCE.relative_to(ROOT)), encoding="utf-8")
     (OUTPUT / "script.txt").write_text(script, encoding="utf-8")
-    state = load_state()
-    used = list(state.get("used", []))
-    rel = str(source.relative_to(ROOT))
-    if rel not in used:
-        used.append(rel)
-    # Once every source has been used, the next run starts a fresh rotation.
-    all_sources = [str(p.relative_to(ROOT)) for p in LIBRARY.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXTS]
-    if all_sources and set(all_sources).issubset(set(used)):
-        state["last_cycle_completed"] = used[-len(all_sources):]
-        used = []
-    state["used"] = used[-500:]
+    state = {
+        "source": str(SOURCE.relative_to(ROOT)),
+        "source_duration_seconds": round(source_duration, 3),
+        "runs": 0,
+    }
+    try:
+        state.update(json.loads(STATE.read_text(encoding="utf-8")))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    state["runs"] = int(state.get("runs", 0)) + 1
+    state["last_run_source"] = str(SOURCE.relative_to(ROOT))
     save_state(state)
-    print(f"Mode 1 selected: {source}")
+    print(f"Mode 1 fixed source: {SOURCE} ({source_duration:.2f}s)")
     print(f"Fresh narration: {len(script.split())} words")
+
+
+def save_state(data: dict) -> None:
+    DATA.mkdir(parents=True, exist_ok=True)
+    STATE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":
