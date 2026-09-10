@@ -1,8 +1,8 @@
 """Finalize normal video output.
 
-Mode 1 can bypass generated visuals entirely: it keeps a user-owned/licensed
-source video, reframes it for Shorts, replaces its audio with fresh narration,
-and burns synchronized captions. Existing animation modes remain unchanged.
+Mode 1 keeps one fixed user-owned/licensed source video, replaces its audio
+with fresh narration, reframes it for Shorts, and burns synchronized captions.
+Existing animation modes remain unchanged.
 """
 from pathlib import Path
 import subprocess
@@ -50,12 +50,12 @@ def run(cmd):
 def finalize_library(source: Path, audio: Path, srt: Path) -> None:
     source_duration = duration(source)
     audio_duration = duration(audio)
-    target = min(45.0, source_duration, audio_duration)
+    # The supplied source is ~60 seconds. Use the shorter stream so neither
+    # video nor narration is padded with silence or frozen frames.
+    target = min(60.0, source_duration, audio_duration)
     if target < 10:
         raise RuntimeError(f"Mode 1 source/audio is too short: {target:.2f}s")
 
-    # Cover the 9:16 canvas while preserving the important center of the source.
-    # The source audio is deliberately discarded and replaced by fresh narration.
     captioned = OUTPUT / "library-captioned.mp4"
     subtitle = f"subtitles={srt.as_posix()}:force_style='FontName=DejaVu Sans,FontSize=22,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=250'"
     vf = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1," + subtitle
@@ -74,13 +74,13 @@ def main() -> None:
             raise RuntimeError("Mode 1 is enabled but output/library_source.txt is missing")
         source = ROOT / source_file.read_text(encoding="utf-8").strip()
         if not source.exists():
-            raise RuntimeError(f"Selected library video does not exist: {source}")
+            raise RuntimeError(f"Selected fixed video does not exist: {source}")
         if not AUDIO.exists() or AUDIO.stat().st_size == 0:
             raise RuntimeError(f"Missing narration audio: {AUDIO}")
         finalize_library(source, AUDIO, make_srt())
         final_duration = duration(FINAL)
-        if not 10 <= final_duration <= 46: raise RuntimeError(f"Final video duration invalid: {final_duration:.2f}s")
-        print(f"Final Mode 1 library video: {FINAL} ({final_duration:.2f}s)")
+        if not 10 <= final_duration <= 61: raise RuntimeError(f"Final video duration invalid: {final_duration:.2f}s")
+        print(f"Final Mode 1 fixed video: {FINAL} ({final_duration:.2f}s)")
         return
 
     for p in (VIDEO, AUDIO):
