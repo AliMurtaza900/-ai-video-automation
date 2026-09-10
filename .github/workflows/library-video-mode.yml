@@ -31,6 +31,14 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Install FFmpeg
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version >/dev/null
+          ffprobe -version >/dev/null
+
       - name: Verify uploaded source video
         run: |
           set -euo pipefail
@@ -44,13 +52,6 @@ jobs:
           if not 55 <= d <= 65:
               raise SystemExit(f"Expected approximately 60-second source, got {d:.2f}s")
           PY
-
-      - name: Install FFmpeg
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          ffmpeg -version >/dev/null
-          ffprobe -version >/dev/null
 
       - name: Normalize source to fixed_source.mp4
         run: |
