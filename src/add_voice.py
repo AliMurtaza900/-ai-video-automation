@@ -28,8 +28,6 @@ def duration_seconds(path: Path) -> float:
 
 
 def make_caption_timings(text: str, duration: float):
-    # Short, punchy captions are easier to read on a phone and leave less text
-    # covering the visual. Split at natural pauses, then cap each caption at 6 words.
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
     chunks = []
     for sentence in sentences:
@@ -40,8 +38,6 @@ def make_caption_timings(text: str, duration: float):
     if not chunks:
         return []
 
-    # Allocate time by character count. This tracks speech length better than
-    # giving every caption an identical duration.
     weights = [max(1, len(c.replace(" ", ""))) for c in chunks]
     total_weight = sum(weights)
     timings = []
@@ -72,7 +68,7 @@ def main():
                 if audio_file.stat().st_size < 10000:
                     raise RuntimeError("TTS returned a tiny audio file")
                 duration = duration_seconds(audio_file)
-                if not 8 <= duration <= 55:
+                if not 8 <= duration <= 70:
                     raise RuntimeError(f"TTS duration is {duration:.2f}s")
                 timings = make_caption_timings(text, duration)
                 timing_file.write_text(
