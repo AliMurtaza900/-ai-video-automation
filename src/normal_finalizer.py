@@ -1,6 +1,12 @@
-"""Finalize the isolated normal cinematic layer with captions and voice."""
+"""Finalize normal video output.
+
+Mode 1 can bypass generated visuals entirely: it keeps a user-owned/licensed
+source video, reframes it for Shorts, replaces its audio with fresh narration,
+and burns synchronized captions. Existing animation modes remain unchanged.
+"""
 from pathlib import Path
 import subprocess
+import os
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
@@ -37,15 +43,54 @@ def make_srt() -> Path:
     return SRT
 
 
+def run(cmd):
+    subprocess.run(cmd, check=True)
+
+
+def finalize_library(source: Path, audio: Path, srt: Path) -> None:
+    source_duration = duration(source)
+    audio_duration = duration(audio)
+    target = min(45.0, source_duration, audio_duration)
+    if target < 10:
+        raise RuntimeError(f"Mode 1 source/audio is too short: {target:.2f}s")
+
+    # Cover the 9:16 canvas while preserving the important center of the source.
+    # The source audio is deliberately discarded and replaced by fresh narration.
+    captioned = OUTPUT / "library-captioned.mp4"
+    subtitle = f"subtitles={srt.as_posix()}:force_style='FontName=DejaVu Sans,FontSize=22,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=250'"
+    vf = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1," + subtitle
+    run(["ffmpeg", "-y", "-i", str(source), "-t", f"{target:.3f}", "-vf", vf,
+         "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", str(captioned)])
+    run(["ffmpeg", "-y", "-i", str(captioned), "-i", str(audio), "-t", f"{target:.3f}",
+         "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+         "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-shortest", "-movflags", "+faststart", str(FINAL)])
+
+
 def main() -> None:
+    mode = os.environ.get("VIDEO_MODE", "normal").strip().lower()
+    if mode == "library":
+        source_file = OUTPUT / "library_source.txt"
+        if not source_file.exists():
+            raise RuntimeError("Mode 1 is enabled but output/library_source.txt is missing")
+        source = ROOT / source_file.read_text(encoding="utf-8").strip()
+        if not source.exists():
+            raise RuntimeError(f"Selected library video does not exist: {source}")
+        if not AUDIO.exists() or AUDIO.stat().st_size == 0:
+            raise RuntimeError(f"Missing narration audio: {AUDIO}")
+        finalize_library(source, AUDIO, make_srt())
+        final_duration = duration(FINAL)
+        if not 10 <= final_duration <= 46: raise RuntimeError(f"Final video duration invalid: {final_duration:.2f}s")
+        print(f"Final Mode 1 library video: {FINAL} ({final_duration:.2f}s)")
+        return
+
     for p in (VIDEO, AUDIO):
         if not p.exists() or p.stat().st_size == 0: raise RuntimeError(f"Missing cinematic artifact: {p}")
     target = min(45.0, duration(AUDIO), duration(VIDEO))
     srt = make_srt()
     captioned = OUTPUT / "cinematic-captioned.mp4"
     subtitle = f"subtitles={srt.as_posix()}:force_style='FontName=DejaVu Sans,FontSize=22,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=250'"
-    subprocess.run(["ffmpeg", "-y", "-i", str(VIDEO), "-t", str(target), "-vf", subtitle, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-an", str(captioned)], check=True)
-    subprocess.run(["ffmpeg", "-y", "-i", str(captioned), "-i", str(AUDIO), "-t", str(target), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-shortest", "-movflags", "+faststart", str(FINAL)], check=True)
+    run(["ffmpeg", "-y", "-i", str(VIDEO), "-t", str(target), "-vf", subtitle, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-an", str(captioned)])
+    run(["ffmpeg", "-y", "-i", str(captioned), "-i", str(AUDIO), "-t", str(target), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-shortest", "-movflags", "+faststart", str(FINAL)])
     final_duration = duration(FINAL)
     if not 10 <= final_duration <= 46: raise RuntimeError(f"Final video duration invalid: {final_duration:.2f}s")
     print(f"Final cinematic normal video: {FINAL} ({final_duration:.2f}s)")
