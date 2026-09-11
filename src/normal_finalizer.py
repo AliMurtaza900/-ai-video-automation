@@ -1,9 +1,4 @@
-"""Finalize normal video output.
-
-Mode 1 uses the fixed source only as a visual library. Every output is cut to
-exactly the narration duration (up to the available source duration), so the
-video never contains trailing footage after the narration ends.
-"""
+"""Finalize normal video output with centered captions and background audio."""
 from pathlib import Path
 import subprocess
 import os
@@ -15,6 +10,7 @@ AUDIO = OUTPUT / "voice.mp3"
 TIMINGS = OUTPUT / "caption_timing.txt"
 SRT = OUTPUT / "cinematic-captions.srt"
 FINAL = OUTPUT / "final-video.mp4"
+MUSIC = ROOT / "assets" / "background_music.mp3"
 
 
 def duration(path: Path) -> float:
@@ -50,23 +46,23 @@ def run(cmd):
 def finalize_library(source: Path, audio: Path, srt: Path) -> None:
     source_duration = duration(source)
     audio_duration = duration(audio)
-    # The narration determines the output length. Never keep unused footage
-    # after narration ends. If narration is longer than the source, use only
-    # the source duration rather than padding the video with frozen frames.
     target = min(source_duration, audio_duration)
     if target < 10:
         raise RuntimeError(f"Mode 1 source/audio is too short: {target:.2f}s")
 
     captioned = OUTPUT / "library-captioned.mp4"
-    # Smaller, clean captions placed in the true vertical center for Shorts.
-    # ASS Alignment=5 means horizontal + vertical center; MarginV is ignored.
     subtitle = f"subtitles={srt.as_posix()}:force_style='FontName=DejaVu Sans,FontSize=16,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=5,MarginV=0'"
     vf = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1," + subtitle
-    run(["ffmpeg", "-y", "-i", str(source), "-t", f"{target:.3f}", "-vf", vf,
-         "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", str(captioned)])
-    run(["ffmpeg", "-y", "-i", str(captioned), "-i", str(audio), "-t", f"{target:.3f}",
-         "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-         "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-shortest", "-movflags", "+faststart", str(FINAL)])
+    run(["ffmpeg", "-y", "-i", str(source), "-t", f"{target:.3f}", "-vf", vf, "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", str(captioned)])
+
+    # Voice stays dominant. If a licensed/local music bed exists, loop it and
+    # mix it quietly underneath the narration; otherwise narration-only works.
+    if MUSIC.exists() and MUSIC.stat().st_size > 0:
+        run(["ffmpeg", "-y", "-i", str(captioned), "-i", str(audio), "-stream_loop", "-1", "-i", str(MUSIC), "-t", f"{target:.3f}",
+             "-filter_complex", "[1:a]volume=1.0[voice];[2:a]volume=0.10,afade=t=in:st=0:d=1,afade=t=out:st=58:d=2[music];[voice][music]amix=inputs=2:duration=shortest:dropout_transition=2[aout]",
+             "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-shortest", "-movflags", "+faststart", str(FINAL)])
+    else:
+        run(["ffmpeg", "-y", "-i", str(captioned), "-i", str(audio), "-t", f"{target:.3f}", "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-shortest", "-movflags", "+faststart", str(FINAL)])
 
 
 def main() -> None:
@@ -82,8 +78,6 @@ def main() -> None:
             raise RuntimeError(f"Missing narration audio: {AUDIO}")
         finalize_library(source, AUDIO, make_srt())
         final_duration = duration(FINAL)
-        # Mode 1 intentionally accepts any valid duration: the narration (or
-        # remaining source footage) determines the final length.
         if not 10 <= final_duration <= 61:
             raise RuntimeError(f"Final video duration invalid: {final_duration:.2f}s")
         print(f"Final Mode 1 fixed video: {FINAL} ({final_duration:.2f}s)")
