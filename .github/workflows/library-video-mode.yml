@@ -3,8 +3,6 @@ name: MAIN - Fixed 60s Video Factory
 on:
   workflow_dispatch:
   schedule:
-    # Four automatic runs per day (UTC): 00:00, 06:00, 12:00, 18:00.
-    # GitHub may start scheduled jobs a little after the exact minute.
     - cron: '0 0 * * *'
     - cron: '0 6 * * *'
     - cron: '0 12 * * *'
@@ -71,6 +69,21 @@ jobs:
               raise SystemExit(f"Normalized source is not approximately 60 seconds: {d:.2f}s")
           PY
 
+      - name: Create safe original background sound bed
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          # Generate a quiet, original ambient bed locally. No copyrighted
+          # music download is required, so the workflow remains self-contained.
+          ffmpeg -y \
+            -f lavfi -i 'sine=frequency=196:duration=65' \
+            -f lavfi -i 'sine=frequency=246.94:duration=65' \
+            -f lavfi -i 'sine=frequency=293.66:duration=65' \
+            -filter_complex "[0:a]volume=0.18[a0];[1:a]volume=0.12[a1];[2:a]volume=0.10[a2];[a0][a1][a2]amix=inputs=3:duration=longest,lowpass=f=1200,afade=t=in:st=0:d=2,afade=t=out:st=62:d=3,loudnorm=I=-24:TP=-2:LRA=11" \
+            -c:a libmp3lame -b:a 96k assets/background_music.mp3
+          test -s assets/background_music.mp3
+          ffprobe -v error -show_entries format=duration -of csv=p=0 assets/background_music.mp3
+
       - name: Install Python dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
 
@@ -109,6 +122,7 @@ jobs:
           test -s output/final-video.mp4
           test -s output/voice.mp3
           test -s output/cinematic-captions.srt
+          test -s output/cinematic-captions.ass
           test -s output/library_source.txt
           test "$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 output/final-video.mp4)" = '1080'
           test "$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 output/final-video.mp4)" = '1920'
@@ -137,7 +151,7 @@ jobs:
           YOUTUBE_PRIVACY: public
           YOUTUBE_MADE_FOR_KIDS: 'false'
           YOUTUBE_CATEGORY_ID: '27'
-          YOUTUBE_DESCRIPTION: 'Original narration and captions added to user-owned or properly licensed source footage.'
+          YOUTUBE_DESCRIPTION: 'Original narration, centered captions, and original background sound added to user-owned or properly licensed source footage.'
         run: python -m src.youtube_upload
 
       - name: Archive MAIN result
@@ -150,6 +164,7 @@ jobs:
             output/voice.mp3
             output/script.txt
             output/cinematic-captions.srt
+            output/cinematic-captions.ass
             output/caption_timing.txt
             output/library_source.txt
             output/youtube_upload.json
