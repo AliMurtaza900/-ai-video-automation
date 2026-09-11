@@ -114,13 +114,19 @@ jobs:
           test "$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 output/final-video.mp4)" = '1920'
           test "$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 output/final-video.mp4)" = 'h264'
           test "$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 output/final-video.mp4)" = 'aac'
-          duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/final-video.mp4)
-          python - "$duration" <<'PY'
+          final_duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/final-video.mp4)
+          voice_duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/voice.mp3)
+          python - "$final_duration" "$voice_duration" <<'PY'
           import sys
-          d=float(sys.argv[1])
-          if not 55 <= d <= 61:
-              raise SystemExit(f'Invalid final duration: {d:.2f}s; expected approximately 60s')
-          print(f'Main fixed-video validation passed: {d:.2f}s')
+          final_d=float(sys.argv[1])
+          voice_d=float(sys.argv[2])
+          if not 8 <= voice_d <= 70:
+              raise SystemExit(f'Invalid narration duration: {voice_d:.2f}s')
+          if not 8 <= final_d <= 61:
+              raise SystemExit(f'Invalid final duration: {final_d:.2f}s')
+          if abs(final_d - voice_d) > 0.75:
+              raise SystemExit(f'Final video ({final_d:.2f}s) does not match narration ({voice_d:.2f}s)')
+          print(f'Main fixed-video validation passed: final={final_d:.2f}s narration={voice_d:.2f}s')
           PY
 
       - name: Upload MAIN Short to YouTube
