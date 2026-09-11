@@ -12,9 +12,6 @@ VOICES = ["en-US-AriaNeural", "en-US-JennyNeural", "en-US-GuyNeural"]
 
 
 async def make_voice(text: str, output: Path, voice: str, rate: str = "+0%"):
-    # Mode 1 targets a ~60s finished Short. A normal Edge TTS rate can make
-    # 105-125 words finish in ~45s, so slow the fixed-video narration enough
-    # to fill the supplied ~60s source without adding dead silence.
     communicate = edge_tts.Communicate(text, voice, rate=rate)
     with output.open("wb") as audio:
         async for chunk in communicate.stream():
@@ -64,8 +61,9 @@ def main():
         raise RuntimeError("Generated script is empty")
 
     library_mode = os.environ.get("VIDEO_MODE", "normal").strip().lower() == "library"
-    # Prefer a ~60s narration for Mode 1. If a voice still lands outside the
-    # target, the fallback rates keep the job robust rather than failing late.
+    # Mode 1 does NOT require the narration itself to be ~60s.
+    # The finalizer will make the video exactly as long as the narration
+    # (up to the available fixed source duration) and crop the unused footage.
     rates = ["-20%", "-15%", "-10%", "+0%"] if library_mode else ["+0%"]
     last_error = None
     for voice in VOICES:
@@ -78,9 +76,7 @@ def main():
                         raise RuntimeError("TTS returned a tiny audio file")
                     duration = duration_seconds(audio_file)
                     if not 8 <= duration <= 70:
-                        raise RuntimeError(f"TTS duration is {duration:.2f}s")
-                    if library_mode and not 54 <= duration <= 62:
-                        raise RuntimeError(f"Mode 1 TTS duration is {duration:.2f}s; expected approximately 60s")
+                        raise RuntimeError(f"TTS duration is {duration:.2f}s; expected 8-70s")
                     timings = make_caption_timings(text, duration)
                     timing_file.write_text(
                         "\n".join(f"{s:.3f}|{e:.3f}|{caption}" for s, e, caption in timings),
