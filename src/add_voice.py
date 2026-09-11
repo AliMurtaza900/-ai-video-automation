@@ -8,7 +8,9 @@ import edge_tts
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "output"
-VOICES = ["en-US-AriaNeural", "en-US-JennyNeural", "en-US-GuyNeural"]
+# Rotate voices so repeated fixed footage does not sound identical every run.
+# Guy is first for a deeper, confident documentary/mystery feel.
+VOICES = ["en-US-GuyNeural", "en-US-AriaNeural", "en-US-JennyNeural"]
 
 
 async def make_voice(text: str, output: Path, voice: str, rate: str = "+0%"):
@@ -61,10 +63,10 @@ def main():
         raise RuntimeError("Generated script is empty")
 
     library_mode = os.environ.get("VIDEO_MODE", "normal").strip().lower() == "library"
-    # Mode 1 does NOT require the narration itself to be ~60s.
-    # The finalizer will make the video exactly as long as the narration
-    # (up to the available fixed source duration) and crop the unused footage.
-    rates = ["-20%", "-15%", "-10%", "+0%"] if library_mode else ["+0%"]
+    # Mode 1 accepts natural narration duration. The finalizer crops the fixed
+    # source to match the narration, so there is no artificial 60s requirement.
+    # Slightly slower rates are attempted first for a cinematic delivery.
+    rates = ["-10%", "-5%", "+0%"] if library_mode else ["+0%"]
     last_error = None
     for voice in VOICES:
         for rate in rates:
