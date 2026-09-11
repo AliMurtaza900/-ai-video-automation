@@ -58,7 +58,9 @@ def finalize_library(source: Path, audio: Path, srt: Path) -> None:
         raise RuntimeError(f"Mode 1 source/audio is too short: {target:.2f}s")
 
     captioned = OUTPUT / "library-captioned.mp4"
-    subtitle = f"subtitles={srt.as_posix()}:force_style='FontName=DejaVu Sans,FontSize=22,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=250'"
+    # Smaller, clean captions placed in the true vertical center for Shorts.
+    # ASS Alignment=5 means horizontal + vertical center; MarginV is ignored.
+    subtitle = f"subtitles={srt.as_posix()}:force_style='FontName=DejaVu Sans,FontSize=16,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=5,MarginV=0'"
     vf = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1," + subtitle
     run(["ffmpeg", "-y", "-i", str(source), "-t", f"{target:.3f}", "-vf", vf,
          "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", str(captioned)])
@@ -92,7 +94,7 @@ def main() -> None:
     target = min(45.0, duration(AUDIO), duration(VIDEO))
     srt = make_srt()
     captioned = OUTPUT / "cinematic-captioned.mp4"
-    subtitle = f"subtitles={srt.as_posix()}:force_style='FontName=DejaVu Sans,FontSize=22,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2,MarginV=250'"
+    subtitle = f"subtitles={srt.as_posix()}:force_style='FontName=DejaVu Sans,FontSize=16,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=5,MarginV=0'"
     run(["ffmpeg", "-y", "-i", str(VIDEO), "-t", str(target), "-vf", subtitle, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-an", str(captioned)])
     run(["ffmpeg", "-y", "-i", str(captioned), "-i", str(AUDIO), "-t", str(target), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-shortest", "-movflags", "+faststart", str(FINAL)])
     final_duration = duration(FINAL)
