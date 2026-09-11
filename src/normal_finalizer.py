@@ -1,8 +1,8 @@
 """Finalize normal video output.
 
-Mode 1 keeps one fixed user-owned/licensed source video, replaces its audio
-with fresh narration, reframes it for Shorts, and burns synchronized captions.
-Existing animation modes remain unchanged.
+Mode 1 uses the fixed source only as a visual library. Every output is cut to
+exactly the narration duration (up to the available source duration), so the
+video never contains trailing footage after the narration ends.
 """
 from pathlib import Path
 import subprocess
@@ -50,9 +50,10 @@ def run(cmd):
 def finalize_library(source: Path, audio: Path, srt: Path) -> None:
     source_duration = duration(source)
     audio_duration = duration(audio)
-    # The supplied source is ~60 seconds. Use the shorter stream so neither
-    # video nor narration is padded with silence or frozen frames.
-    target = min(60.0, source_duration, audio_duration)
+    # The narration determines the output length. Never keep unused footage
+    # after narration ends. If narration is longer than the source, use only
+    # the source duration rather than padding the video with frozen frames.
+    target = min(source_duration, audio_duration)
     if target < 10:
         raise RuntimeError(f"Mode 1 source/audio is too short: {target:.2f}s")
 
@@ -79,7 +80,10 @@ def main() -> None:
             raise RuntimeError(f"Missing narration audio: {AUDIO}")
         finalize_library(source, AUDIO, make_srt())
         final_duration = duration(FINAL)
-        if not 10 <= final_duration <= 61: raise RuntimeError(f"Final video duration invalid: {final_duration:.2f}s")
+        # Mode 1 intentionally accepts any valid duration: the narration (or
+        # remaining source footage) determines the final length.
+        if not 10 <= final_duration <= 61:
+            raise RuntimeError(f"Final video duration invalid: {final_duration:.2f}s")
         print(f"Final Mode 1 fixed video: {FINAL} ({final_duration:.2f}s)")
         return
 
